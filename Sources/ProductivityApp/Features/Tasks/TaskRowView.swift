@@ -52,8 +52,10 @@ public struct TaskRowView: View {
                 }
             } label: {
                 Image(systemName: task.status == .completed ? "checkmark.circle.fill" : (task.status == .inProgress ? "circle.dotted" : "circle"))
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.system(size: 17, weight: .medium))
                     .foregroundStyle(statusColor)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(task.status == .completed ? "Mark as pending" : "Mark as completed")
@@ -143,8 +145,10 @@ public struct TaskRowView: View {
                             onStartFocus()
                         } label: {
                             Image(systemName: "play.circle.fill")
-                                .font(.system(size: 14))
+                                .font(.system(size: 15))
                                 .foregroundStyle(.orange)
+                                .frame(width: 24, height: 24)
+                                .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
                         .help("Start focus session")
@@ -155,8 +159,10 @@ public struct TaskRowView: View {
                             NotesSyncService.shared.autoSync(context: modelContext)
                         } label: {
                             Image(systemName: "arrow.right.circle")
-                                .font(.system(size: 14))
+                                .font(.system(size: 15))
                                 .foregroundStyle(.secondary)
+                                .frame(width: 24, height: 24)
+                                .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
                         .help("Move to tomorrow")
@@ -166,8 +172,10 @@ public struct TaskRowView: View {
                         onEdit()
                     } label: {
                         Image(systemName: "pencil.circle")
-                            .font(.system(size: 14))
+                            .font(.system(size: 15))
                             .foregroundStyle(.secondary)
+                            .frame(width: 24, height: 24)
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .help("Edit task")

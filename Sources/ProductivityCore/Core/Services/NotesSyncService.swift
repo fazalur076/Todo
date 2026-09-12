@@ -78,26 +78,30 @@ public final class NotesSyncService {
         if workTasks.isEmpty {
             html += "<div><i><font color=\"#8E8E93\">No active tasks</font></i></div>"
         } else {
+            html += "<ul>"
             for task in workTasks {
                 if task.status == .completed {
-                    html += "<div><strike><font color=\"#8E8E93\"><span style=\"color: #34C759;\">✓ </span>\(escapeHtml(task.title))</font></strike></div>"
+                    html += "<li><strike><font color=\"#8E8E93\">✓ \(escapeHtml(task.title))</font></strike></li>"
                 } else {
-                    html += "<div><font color=\"#8E8E93\">○ </font>\(escapeHtml(task.title))</div>"
+                    html += "<li>○ \(escapeHtml(task.title))</li>"
                 }
             }
+            html += "</ul>"
         }
         html += "<div><br></div>"
         html += "<div><b>PERSONAL</b></div>"
         if personalTasks.isEmpty {
             html += "<div><i><font color=\"#8E8E93\">No active tasks</font></i></div>"
         } else {
+            html += "<ul>"
             for task in personalTasks {
                 if task.status == .completed {
-                    html += "<div><strike><font color=\"#8E8E93\"><span style=\"color: #34C759;\">✓ </span>\(escapeHtml(task.title))</font></strike></div>"
+                    html += "<li><strike><font color=\"#8E8E93\">✓ \(escapeHtml(task.title))</font></strike></li>"
                 } else {
-                    html += "<div><font color=\"#8E8E93\">○ </font>\(escapeHtml(task.title))</div>"
+                    html += "<li>○ \(escapeHtml(task.title))</li>"
                 }
             }
+            html += "</ul>"
         }
 
         return (noteTitle, plainText, html)
@@ -464,15 +468,22 @@ public final class NotesSyncService {
         self.lastSyncTime = Date()
     }
 
-    /// Pure backend AppleScript sync: updates Apple Notes silently in the background
-    /// with ZERO keystrokes, ZERO focus stealing, and ZERO typing on the frontend.
+    /// Pure backend AppleScript sync: updates Apple Notes atomically with ZERO letter-by-letter typing.
+    /// When Accessibility is granted, applies native checklist circles via a single instant shortcut and restores your active app immediately.
     private func syncDirectlyToNotes(htmlBody: String, openNotes: Bool = false) async throws {
         let escapeAppleScript: (String) -> String = { str in
             str.replacingOccurrences(of: "\\", with: "\\\\")
                .replacingOccurrences(of: "\"", with: "\\\"")
         }
 
-        let scriptSource = """
+        let isTrusted = AXIsProcessTrusted()
+        var scriptLines: [String] = []
+
+        if isTrusted {
+            scriptLines.append("set previousApp to path to frontmost application as text")
+        }
+
+        scriptLines.append("""
         tell application "Notes"
             set noteTitle to "TASKS — TODAY"
             set activeNotes to {}
@@ -495,11 +506,37 @@ public final class NotesSyncService {
                 set theNote to item 1 of activeNotes
                 set body of theNote to "\(escapeAppleScript(htmlBody))"
             end if
-            \(openNotes ? "show item 1 of (notes whose name is noteTitle)" : "")
-        end tell
-        """
+        """)
 
-        try await executeScript(scriptSource)
+        if isTrusted {
+            scriptLines.append("""
+            show item 1 of (notes whose name is noteTitle)
+        end tell
+
+        tell application "System Events"
+            tell process "Notes"
+                keystroke "a" using {command down}
+                keystroke "l" using {shift down, command down}
+            end tell
+        end tell
+        """)
+            if !openNotes {
+                scriptLines.append("""
+                tell application previousApp to activate
+                """)
+            }
+        } else {
+            if openNotes {
+                scriptLines.append("""
+            show item 1 of (notes whose name is noteTitle)
+            """)
+            }
+            scriptLines.append("""
+        end tell
+        """)
+        }
+
+        try await executeScript(scriptLines.joined(separator: "\n"))
     }
 
     private func executeScript(_ source: String) async throws {

@@ -49,6 +49,23 @@ public final class MenuBarController: NSObject {
         AppState.shared.openMainPanelHandler = { [weak self] in
             self?.openMainPanel()
         }
+
+        // Auto-close when swiping 4 fingers to switch desktops / spaces
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.closeMainPanel()
+            }
+        }
+    }
+
+    public var statusItemButtonScreenRect: NSRect? {
+        guard let button = statusItem?.button, let window = button.window else { return nil }
+        let buttonRect = button.convert(button.bounds, to: nil)
+        return window.convertToScreen(buttonRect)
     }
 
     public func toggleMainPanel() {
@@ -72,6 +89,9 @@ public final class MenuBarController: NSObject {
                 isMovable: true,
                 rootView: AnyView(rootView)
             )
+            panel.ignoredClickScreenRectProvider = { [weak self] in
+                self?.statusItemButtonScreenRect
+            }
             self.mainPanel = panel
         }
 
@@ -81,7 +101,7 @@ public final class MenuBarController: NSObject {
 
         guard let panel = mainPanel, let button = statusItem?.button, let window = button.window else { return }
 
-        // Position directly below status item with a 6px gap, completely eliminating the popover beak arrow!
+        // Position directly below status item with a 6px gap
         let buttonRect = button.convert(button.bounds, to: nil)
         let screenRect = window.convertToScreen(buttonRect)
         let panelWidth: CGFloat = 480
@@ -106,7 +126,7 @@ public final class MenuBarController: NSObject {
 
     public func closeMainPanel() {
         mainPanel?.orderOut(nil)
-        mainPanel = nil
+        // Keep panel instance cached for instant 0ms opening without reconstruction
     }
 
     public func showQuickCapture() {

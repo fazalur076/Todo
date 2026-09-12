@@ -16,7 +16,7 @@ public class FloatingPanel<Content: View>: NSPanel {
         )
 
         self.level = .floating
-        self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        self.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         self.titleVisibility = .hidden
         self.titlebarAppearsTransparent = true
         self.isMovableByWindowBackground = isMovable
@@ -47,6 +47,7 @@ public class FloatingPanel<Content: View>: NSPanel {
     }
 
     private var clickEventMonitor: Any?
+    public var ignoredClickScreenRectProvider: (() -> NSRect?)?
 
     public override func makeKeyAndOrderFront(_ sender: Any?) {
         super.makeKeyAndOrderFront(sender)
@@ -68,6 +69,10 @@ public class FloatingPanel<Content: View>: NSPanel {
         clickEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             guard let self = self, self.isVisible else { return }
             let mouseLocation = NSEvent.mouseLocation
+            // If click is on the status item button, ignore it here so the button action can toggle cleanly
+            if let ignoredRect = self.ignoredClickScreenRectProvider?(), ignoredRect.contains(mouseLocation) {
+                return
+            }
             if !self.frame.contains(mouseLocation) {
                 self.close()
             }

@@ -241,7 +241,7 @@ public struct TaskListView: View {
 
             Spacer()
 
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 // Focus session shortcut
                 Button {
                     withAnimation(.easeInOut(duration: 0.16)) {
@@ -249,11 +249,12 @@ public struct TaskListView: View {
                     }
                 } label: {
                     Image(systemName: "timer")
-                        .font(.system(size: 12))
+                        .font(.system(size: 13))
                         .foregroundStyle(.secondary)
-                        .padding(5)
+                        .frame(width: 30, height: 30)
                         .background(Color.primary.opacity(0.06))
                         .clipShape(Circle())
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .focusEffectDisabled()
@@ -291,16 +292,17 @@ public struct TaskListView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 12))
+                        .font(.system(size: 13))
                         .foregroundStyle(.secondary)
-                        .padding(5)
+                        .frame(width: 30, height: 30)
                         .background(Color.primary.opacity(0.06))
                         .clipShape(Circle())
+                        .contentShape(Circle())
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .focusEffectDisabled()
-                .frame(width: 26, height: 26)
+                .frame(width: 30, height: 30)
             }
         }
         .padding(.horizontal, 16)
@@ -345,7 +347,7 @@ public struct TaskListView: View {
 
     // MARK: - Filter Segment
     private var filterSegmentView: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             filterButton(title: "All", count: workspaceTasks.count, status: nil)
             filterButton(title: "Pending", count: pendingTasks.count, status: .pending)
             filterButton(title: "In Progress", count: inProgressTasks.count, status: .inProgress)
@@ -364,21 +366,22 @@ public struct TaskListView: View {
                 filterStatus = status
             }
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Text(title)
-                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
                 Text("\(count)")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(isSelected ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.06))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(isSelected ? Color.accentColor.opacity(0.22) : Color.primary.opacity(0.06))
                     .clipShape(Capsule())
             }
             .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(isSelected ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
@@ -548,11 +551,12 @@ public struct TaskListView: View {
                     showMoveUnfinishedConfirmation = true
                 } label: {
                     Image(systemName: "arrow.right.to.line")
-                        .font(.system(size: 12))
+                        .font(.system(size: 13))
                         .foregroundStyle(.secondary)
-                        .padding(5)
+                        .frame(width: 30, height: 30)
                         .background(Color.primary.opacity(0.06))
                         .clipShape(Circle())
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .focusEffectDisabled()
@@ -564,18 +568,19 @@ public struct TaskListView: View {
                 showSettingsSheet = true
             } label: {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 12))
+                    .font(.system(size: 13))
                     .foregroundStyle(.secondary)
-                    .padding(5)
+                    .frame(width: 30, height: 30)
                     .background(Color.primary.opacity(0.06))
                     .clipShape(Circle())
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .focusEffectDisabled()
             .help("Preferences")
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
         .background(Color.primary.opacity(0.02))
     }
 
