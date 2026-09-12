@@ -100,14 +100,15 @@ public final class NotesSyncService {
         return (noteTitle, plainText, html)
     }
 
-    /// Directly pushes changes made in the app to Apple Notes with minimal latency
+    /// Pushes changes made in the app to Apple Notes only if an actual difference exists
     public func autoSync(context: ModelContext) {
         autoSyncTask?.cancel()
         autoSyncTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 80_000_000)
+            try? await Task.sleep(nanoseconds: 1_200_000_000) // 1.2s debounce
             guard !Task.isCancelled else { return }
+            guard self.needsPushToNotes(context: context) else { return }
             do {
-                try await syncToNotes(from: context, openNotes: false)
+                try await self.syncToNotes(from: context, openNotes: false)
             } catch {
                 print("Auto-sync to Notes error: \(error)")
             }
@@ -240,18 +241,92 @@ public final class NotesSyncService {
         return []
     }
 
-    /// Two-way sync: Pulls user edits from Apple Notes first, then pushes unified state back.
+    /// Compares local tasks with Apple Notes to avoid unnecessary note rewrites and mobile conflicts
+    public func needsPushToNotes(context: ModelContext) -> Bool {
+        let taskDescriptor = FetchDescriptor<TaskItem>(
+            sortBy: [SortDescriptor(\.sortOrder)]
+        )
+        let allTasks = (try? context.fetch(taskDescriptor)) ?? []
+
+        let localWorkTasks = allTasks.filter { $0.workspace == .work && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue) }
+        let localPersonalTasks = allTasks.filter { $0.workspace == .personal && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue) }
+
+        let notesItems = fetchCurrentNotesItems()
+        if notesItems.isEmpty {
+            return !localWorkTasks.isEmpty || !localPersonalTasks.isEmpty
+        }
+
+        let notesWork = notesItems.filter { $0.workspace == .work }
+        let notesPersonal = notesItems.filter { $0.workspace == .personal }
+
+        if localWorkTasks.count != notesWork.count || localPersonalTasks.count != notesPersonal.count {
+            return true
+        }
+
+        for local in localWorkTasks {
+            guard let match = notesWork.first(where: {
+                $0.title.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(local.title.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+            }) else {
+                return true
+            }
+            if match.isCompleted != (local.status == .completed) {
+                return true
+            }
+        }
+
+        for local in localPersonalTasks {
+            guard let match = notesPersonal.first(where: {
+                $0.title.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(local.title.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+            }) else {
+                return true
+            }
+            if match.isCompleted != (local.status == .completed) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private func fetchCurrentNotesItems() -> [(title: String, workspace: Workspace, isCompleted: Bool)] {
+        let storeItems = fetchItemsFromNoteStore()
+        if !storeItems.isEmpty {
+            return storeItems
+        }
+
+        let scriptSource = """
+        tell application "Notes"
+            set targetNotes to (notes whose name is "TASKS — TODAY")
+            if (count of targetNotes) > 0 then
+                return body of item 1 of targetNotes
+            else
+                return ""
+            end if
+        end tell
+        """
+        var errorDict: NSDictionary?
+        guard let script = NSAppleScript(source: scriptSource) else { return [] }
+        let descriptor = script.executeAndReturnError(&errorDict)
+        if let body = descriptor.stringValue, !body.isEmpty {
+            return parseNotesBody(body)
+        }
+        return []
+    }
+
+    /// Two-way sync: Pulls user edits from Apple Notes first, and only pushes if local changes exist.
     @discardableResult
     public func syncTwoWay(context: ModelContext, openNotes: Bool = false) async throws -> (added: Int, updated: Int) {
         isSyncing = true
         lastSyncError = nil
         defer { isSyncing = false }
 
-        // Step 1: Pull from Notes to avoid erasing user additions
+        // Step 1: Pull from Notes first so mobile edits are preserved in the Mac app
         let result = (try? await pullFromNotes(context: context)) ?? (0, 0)
 
-        // Step 2: Push unified state back to Notes
-        try await syncToNotes(from: context, openNotes: openNotes)
+        // Step 2: Push back ONLY if there are local differences not yet in Notes
+        if needsPushToNotes(context: context) {
+            try await syncToNotes(from: context, openNotes: openNotes)
+        }
 
         return result
     }
@@ -275,30 +350,36 @@ public final class NotesSyncService {
         let workTasks = allTasks.filter { $0.workspace == .work && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue) }
         let personalTasks = allTasks.filter { $0.workspace == .personal && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue) }
 
-        if !AXIsProcessTrusted() {
-            Self.requestAccessibilityPermission()
-            try await syncViaHTML(from: context)
+        // If openNotes is false (e.g. background/auto-sync), or if accessibility is not granted:
+        // Update silently via HTML without stealing focus or interrupting mobile editing!
+        if !openNotes || !AXIsProcessTrusted() {
+            if !AXIsProcessTrusted() && openNotes {
+                Self.requestAccessibilityPermission()
+            }
+            try await syncViaHTML(from: context, activate: openNotes)
             self.lastSyncTime = Date()
             return
         }
 
+        // When openNotes is explicitly true and Accessibility is granted, format with native checklist keystrokes
         do {
             try await syncViaKeystrokes(workTasks: workTasks, personalTasks: personalTasks)
         } catch {
             Self.requestAccessibilityPermission()
-            try await syncViaHTML(from: context)
+            try await syncViaHTML(from: context, activate: true)
         }
 
         self.lastSyncTime = Date()
     }
 
-    private func syncViaHTML(from context: ModelContext) async throws {
+    private func syncViaHTML(from context: ModelContext, activate: Bool = false) async throws {
         let (_, _, htmlBody) = buildNotesContent(from: context)
         let escapedBody = htmlBody.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let activateCmd = activate ? "reopen\nactivate" : ""
+        let showCmd = activate ? "show item 1 of (notes of default account whose name is noteTitle)" : ""
         let scriptSource = """
         tell application "Notes"
-            reopen
-            activate
+            \(activateCmd)
             set noteTitle to "TASKS — TODAY"
             set noteHTML to "\(escapedBody)"
             set targetNotes to (notes of folder "Notes" of default account whose name is noteTitle)
@@ -314,7 +395,7 @@ public final class NotesSyncService {
             else
                 set body of item 1 of targetNotes to noteHTML
             end if
-            show item 1 of (notes of default account whose name is noteTitle)
+            \(showCmd)
         end tell
         """
         try await executeScript(scriptSource)
