@@ -11,6 +11,7 @@ public struct SettingsView: View {
 
     @State private var syncStatusMessage: String?
     @State private var isSyncingNotes: Bool = false
+    @State private var showAccessibilityInfoPopover: Bool = false
     var onClose: () -> Void
 
     public init(onClose: @escaping () -> Void) {
@@ -202,14 +203,45 @@ public struct SettingsView: View {
             }
 
             Section("Apple Notes Checklist Automation") {
-                HStack {
-                    Text("Accessibility Permission")
-                    Spacer()
-                    if NotesSyncService.isAccessibilityGranted {
-                        Label("Granted", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                            .font(.caption)
-                    } else {
+                if !NotesSyncService.isAccessibilityGranted {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .font(.system(size: 14))
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Notes update option not allowed. Please grant Accessibility permission.")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                            }
+
+                            Spacer()
+
+                            Button {
+                                showAccessibilityInfoPopover = true
+                            } label: {
+                                Image(systemName: "info.circle")
+                                    .foregroundStyle(.blue)
+                                    .font(.system(size: 14))
+                            }
+                            .buttonStyle(.plain)
+                            .popover(isPresented: $showAccessibilityInfoPopover) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Label("Why Accessibility?", systemImage: "hand.raised.circle")
+                                        .font(.headline)
+                                    Text("Productivity only uses macOS accessibility shortcuts (⇧⌘L and ⇧⌘U) to format interactive checklist circles in Apple Notes.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text("We do not access, monitor, log, or store your keystrokes, screen, or any other applications.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding()
+                                .frame(width: 280)
+                            }
+                        }
+
                         Button("Open System Settings...") {
                             let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
                             NSWorkspace.shared.open(url)
@@ -217,10 +249,21 @@ public struct SettingsView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                     }
+                    .padding(10)
+                    .background(Color.orange.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                } else {
+                    HStack {
+                        Text("Accessibility Permission")
+                        Spacer()
+                        Label("Granted", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                            .font(.caption)
+                    }
+                    Text("Granted for Productivity to automate native Apple Notes checklist circles (◯). Tasks appear with interactive checkboxes.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
-                Text("Required by macOS for Productivity to automate native Apple Notes checklist circles (◯). When granted, tasks appear with interactive checkboxes.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

@@ -13,6 +13,8 @@ public final class NotesSyncService {
     private var autoSyncTask: Task<Void, Never>?
     private var backgroundPullTimer: Timer?
     private var lastRecreationAttempt: Date? = nil
+    private var hasPendingSyncRequest: Bool = false
+    private var lastSyncFinishedAt: Date? = nil
 
     private init() {
         startBackgroundPullTimer()
@@ -101,11 +103,12 @@ public final class NotesSyncService {
         return (noteTitle, plainText, html)
     }
 
-    /// Pushes changes made in the app to Apple Notes only if an actual difference exists
+    /// Pushes changes made in the app to Apple Notes after a 15-second background debounce window
     public func autoSync(context: ModelContext) {
         autoSyncTask?.cancel()
         autoSyncTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_200_000_000) // 1.2s debounce
+            // 15 seconds debounce: Calm background sync without thrashing or interrupting user flow
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
             guard !Task.isCancelled else { return }
             guard self.needsPushToNotes(context: context) else { return }
             do {
@@ -196,16 +199,22 @@ public final class NotesSyncService {
 
         var addedCount = 0
         var updatedCount = 0
+        var seenTitles = Set(existingTasks.map { "\($0.workspace.rawValue)::\($0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())" })
 
         for item in parsedItems {
+            let cleanTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanTitle.isEmpty else { continue }
+            let key = "\(item.workspace.rawValue)::\(cleanTitle.lowercased())"
+
             let matching = existingTasks.first {
                 $0.workspace == item.workspace &&
-                $0.title.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(item.title) == .orderedSame
+                $0.title.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(cleanTitle) == .orderedSame
             }
 
             if let task = matching {
-                // Protect tasks modified locally in the app within the last 2 seconds from race conditions
-                let isRecentlyModifiedLocally = Date().timeIntervalSince(task.updatedAt) < 2
+                // ProductivityApp is the primary Proof DB:
+                // Protect tasks modified locally in the app within the last 15 seconds from being overwritten
+                let isRecentlyModifiedLocally = Date().timeIntervalSince(task.updatedAt) < 15.0
                 if !isRecentlyModifiedLocally {
                     if item.isCompleted && task.status != .completed {
                         task.status = .completed
@@ -217,11 +226,12 @@ public final class NotesSyncService {
                         updatedCount += 1
                     }
                 }
-            } else {
-                // New task discovered in Notes! Add it to SwiftData.
-                let nextOrder = existingTasks.filter { $0.workspace == item.workspace }.map(\.sortOrder).max() ?? 0
+            } else if !seenTitles.contains(key) {
+                // New task discovered in Notes: insert once, avoiding double/triple entry
+                seenTitles.insert(key)
+                let nextOrder = (existingTasks.filter { $0.workspace == item.workspace }.map(\.sortOrder).max() ?? 0) + addedCount
                 let newTask = TaskItem(
-                    title: item.title,
+                    title: cleanTitle,
                     workspace: item.workspace,
                     status: item.isCompleted ? .completed : .pending,
                     sortOrder: nextOrder + 1
@@ -383,10 +393,6 @@ public final class NotesSyncService {
     /// Two-way sync: Pulls user edits from Apple Notes first, and only pushes if local changes exist.
     @discardableResult
     public func syncTwoWay(context: ModelContext, openNotes: Bool = false) async throws -> (added: Int, updated: Int) {
-        isSyncing = true
-        lastSyncError = nil
-        defer { isSyncing = false }
-
         // Step 1: Pull from Notes first so mobile edits are preserved in the Mac app
         let result = (try? await pullFromNotes(context: context)) ?? (0, 0)
 
@@ -409,6 +415,37 @@ public final class NotesSyncService {
     }
 
     public func syncToNotes(from context: ModelContext, openNotes: Bool = true) async throws {
+        // Accessibility Permission Guard: Do not attempt automation if permission is not granted
+        guard AXIsProcessTrusted() else {
+            lastSyncError = "Notes update option not allowed. Please grant Accessibility permission in System Settings."
+            return
+        }
+
+        // Concurrency Guard: Prevent parallel colliding sync requests
+        if isSyncing {
+            hasPendingSyncRequest = true
+            return
+        }
+
+        // Calm-down cooldown window: ensure 3s calm after the last sync before starting another
+        if let lastFinish = lastSyncFinishedAt, Date().timeIntervalSince(lastFinish) < 3.0 {
+            try? await Task.sleep(nanoseconds: UInt64((3.0 - Date().timeIntervalSince(lastFinish)) * 1_000_000_000))
+        }
+
+        isSyncing = true
+        lastSyncError = nil
+        defer {
+            isSyncing = false
+            lastSyncFinishedAt = Date()
+            if hasPendingSyncRequest {
+                hasPendingSyncRequest = false
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    try? await self.syncToNotes(from: context, openNotes: false)
+                }
+            }
+        }
+
         let taskDescriptor = FetchDescriptor<TaskItem>(
             sortBy: [SortDescriptor(\.sortOrder)]
         )
@@ -418,14 +455,7 @@ public final class NotesSyncService {
         let workTasks = allTasks.filter { $0.workspace == .work && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
         let personalTasks = allTasks.filter { $0.workspace == .personal && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
 
-        // We ALWAYS format using native checklist keystrokes so Apple Notes uses true interactive circles.
-        if AXIsProcessTrusted() {
-            try await syncViaKeystrokes(workTasks: workTasks, personalTasks: personalTasks, htmlBody: content.htmlBody, activate: openNotes)
-        } else {
-            Self.requestAccessibilityPermission()
-            try await syncViaKeystrokes(workTasks: workTasks, personalTasks: personalTasks, htmlBody: content.htmlBody, activate: openNotes)
-        }
-
+        try await syncViaKeystrokes(workTasks: workTasks, personalTasks: personalTasks, htmlBody: content.htmlBody, activate: openNotes)
         self.lastSyncTime = Date()
     }
 
