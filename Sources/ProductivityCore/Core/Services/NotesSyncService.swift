@@ -12,6 +12,7 @@ public final class NotesSyncService {
 
     private var autoSyncTask: Task<Void, Never>?
     private var backgroundPullTimer: Timer?
+    private var lastRecreationAttempt: Date? = nil
 
     private init() {
         startBackgroundPullTimer()
@@ -34,8 +35,8 @@ public final class NotesSyncService {
         )
         let allTasks = (try? context.fetch(taskDescriptor)) ?? []
 
-        let workTasks = allTasks.filter { $0.workspace == .work && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue) }
-        let personalTasks = allTasks.filter { $0.workspace == .personal && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue) }
+        let workTasks = allTasks.filter { $0.workspace == .work && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
+        let personalTasks = allTasks.filter { $0.workspace == .personal && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
 
         let timeFormatter = DateFormatter()
         timeFormatter.dateFormat = "h:mm a"
@@ -118,6 +119,20 @@ public final class NotesSyncService {
     /// Pulls items from Apple Notes into SwiftData (Reverse Sync)
     @discardableResult
     public func pullFromNotes(context: ModelContext) async throws -> (added: Int, updated: Int) {
+        // If the note was deleted or does not exist in Apple Notes, recreate it from the app!
+        if !noteExistsInNotes() {
+            let allTasksDescriptor = FetchDescriptor<TaskItem>()
+            let existingTasks = (try? context.fetch(allTasksDescriptor)) ?? []
+            if !existingTasks.isEmpty {
+                let shouldRecreate = lastRecreationAttempt == nil || Date().timeIntervalSince(lastRecreationAttempt!) > 5
+                if shouldRecreate {
+                    lastRecreationAttempt = Date()
+                    try? await syncToNotes(from: context, openNotes: false)
+                }
+            }
+            return (0, 0)
+        }
+
         // Step 1: Attempt to read native checklist states directly from NoteStore.sqlite
         var parsedItems = fetchItemsFromNoteStore()
 
@@ -125,9 +140,17 @@ public final class NotesSyncService {
         if parsedItems.isEmpty {
             let scriptSource = """
             tell application "Notes"
-                set targetNotes to (notes whose name is "TASKS — TODAY")
-                if (count of targetNotes) > 0 then
-                    return body of item 1 of targetNotes
+                set activeNotes to {}
+                repeat with n in (notes whose name is "TASKS — TODAY")
+                    try
+                        set c to container of n
+                        if (name of c) is not "Recently Deleted" then
+                            set end of activeNotes to n
+                        end if
+                    end try
+                end repeat
+                if (count of activeNotes) > 0 then
+                    return body of item 1 of activeNotes
                 else
                     return ""
                 end if
@@ -156,10 +179,20 @@ public final class NotesSyncService {
             }
         }
 
-        guard !parsedItems.isEmpty else { return (0, 0) }
-
         let allTasksDescriptor = FetchDescriptor<TaskItem>()
         let existingTasks = (try? context.fetch(allTasksDescriptor)) ?? []
+
+        if parsedItems.isEmpty {
+            // If the note was deleted and not found in Notes, recreate it from the app!
+            if !existingTasks.isEmpty {
+                let shouldRecreate = lastRecreationAttempt == nil || Date().timeIntervalSince(lastRecreationAttempt!) > 5
+                if shouldRecreate && !noteExistsInNotes() {
+                    lastRecreationAttempt = Date()
+                    try? await syncToNotes(from: context, openNotes: false)
+                }
+            }
+            return (0, 0)
+        }
 
         var addedCount = 0
         var updatedCount = 0
@@ -248,8 +281,12 @@ public final class NotesSyncService {
         )
         let allTasks = (try? context.fetch(taskDescriptor)) ?? []
 
-        let localWorkTasks = allTasks.filter { $0.workspace == .work && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue) }
-        let localPersonalTasks = allTasks.filter { $0.workspace == .personal && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue) }
+        let localWorkTasks = allTasks.filter { $0.workspace == .work && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
+        let localPersonalTasks = allTasks.filter { $0.workspace == .personal && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
+
+        if !noteExistsInNotes() {
+            return !localWorkTasks.isEmpty || !localPersonalTasks.isEmpty
+        }
 
         let notesItems = fetchCurrentNotesItems()
         if notesItems.isEmpty {
@@ -296,9 +333,17 @@ public final class NotesSyncService {
 
         let scriptSource = """
         tell application "Notes"
-            set targetNotes to (notes whose name is "TASKS — TODAY")
-            if (count of targetNotes) > 0 then
-                return body of item 1 of targetNotes
+            set activeNotes to {}
+            repeat with n in (notes whose name is "TASKS — TODAY")
+                try
+                    set c to container of n
+                    if (name of c) is not "Recently Deleted" then
+                        set end of activeNotes to n
+                    end if
+                end try
+            end repeat
+            if (count of activeNotes) > 0 then
+                return body of item 1 of activeNotes
             else
                 return ""
             end if
@@ -311,6 +356,28 @@ public final class NotesSyncService {
             return parseNotesBody(body)
         }
         return []
+    }
+
+    /// Checks whether an active (non-deleted) TASKS — TODAY note exists in Apple Notes
+    public func noteExistsInNotes() -> Bool {
+        let scriptSource = """
+        tell application "Notes"
+            set activeNotes to {}
+            repeat with n in (notes whose name is "TASKS — TODAY")
+                try
+                    set c to container of n
+                    if (name of c) is not "Recently Deleted" then
+                        set end of activeNotes to n
+                    end if
+                end try
+            end repeat
+            return (count of activeNotes) > 0
+        end tell
+        """
+        var errorDict: NSDictionary?
+        guard let script = NSAppleScript(source: scriptSource) else { return false }
+        let descriptor = script.executeAndReturnError(&errorDict)
+        return descriptor.booleanValue
     }
 
     /// Two-way sync: Pulls user edits from Apple Notes first, and only pushes if local changes exist.
@@ -347,26 +414,29 @@ public final class NotesSyncService {
         )
         let allTasks = (try? context.fetch(taskDescriptor)) ?? []
 
-        let workTasks = allTasks.filter { $0.workspace == .work && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue) }
-        let personalTasks = allTasks.filter { $0.workspace == .personal && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue) }
+        let content = buildNotesContent(from: context)
+        let workTasks = allTasks.filter { $0.workspace == .work && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
+        let personalTasks = allTasks.filter { $0.workspace == .personal && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
 
         // We ALWAYS format using native checklist keystrokes so Apple Notes uses true interactive circles.
         if AXIsProcessTrusted() {
-            try await syncViaKeystrokes(workTasks: workTasks, personalTasks: personalTasks, activate: openNotes)
+            try await syncViaKeystrokes(workTasks: workTasks, personalTasks: personalTasks, htmlBody: content.htmlBody, activate: openNotes)
         } else {
             Self.requestAccessibilityPermission()
-            try await syncViaKeystrokes(workTasks: workTasks, personalTasks: personalTasks, activate: openNotes)
+            try await syncViaKeystrokes(workTasks: workTasks, personalTasks: personalTasks, htmlBody: content.htmlBody, activate: openNotes)
         }
 
         self.lastSyncTime = Date()
     }
 
-    private func syncViaKeystrokes(workTasks: [TaskItem], personalTasks: [TaskItem], activate: Bool = true) async throws {
+    private func syncViaKeystrokes(workTasks: [TaskItem], personalTasks: [TaskItem], htmlBody: String, activate: Bool = true) async throws {
         let frontmostApp = NSWorkspace.shared.frontmostApplication
         let escapeAppleScript: (String) -> String = { str in
             str.replacingOccurrences(of: "\\", with: "\\\\")
                .replacingOccurrences(of: "\"", with: "\\\"")
         }
+
+        let cleanBody = htmlBody.replacingOccurrences(of: "<div><b><span style=\"font-size: 22px;\">TASKS — TODAY</span></b></div><div><br></div>", with: "<div><br></div>")
 
         var scriptLines: [String] = []
         scriptLines.append("""
@@ -374,19 +444,32 @@ public final class NotesSyncService {
             reopen
             activate
             set noteTitle to "TASKS — TODAY"
-            set targetNotes to (notes of folder "Notes" of default account whose name is noteTitle)
-            if (count of targetNotes) = 0 then
-                set targetNotes to (notes of default account whose name is noteTitle)
-            end if
-            if (count of targetNotes) = 0 then
+            set activeNotes to {}
+            repeat with n in (notes whose name is noteTitle)
                 try
-                    make new note at default account with properties {name:noteTitle, body:""}
-                on error
-                    make new note with properties {name:noteTitle, body:""}
+                    set c to container of n
+                    if (name of c) is not "Recently Deleted" then
+                        set end of activeNotes to n
+                    end if
                 end try
-                set targetNotes to (notes of default account whose name is noteTitle)
+            end repeat
+            if (count of activeNotes) = 0 then
+                try
+                    make new note at default account with properties {name:noteTitle, body:"\(escapeAppleScript(cleanBody))"}
+                on error
+                    make new note with properties {name:noteTitle, body:"\(escapeAppleScript(cleanBody))"}
+                end try
+                set activeNotes to {}
+                repeat with n in (notes whose name is noteTitle)
+                    try
+                        set c to container of n
+                        if (name of c) is not "Recently Deleted" then
+                            set end of activeNotes to n
+                        end if
+                    end try
+                end repeat
             end if
-            show item 1 of targetNotes
+            show item 1 of activeNotes
         end tell
 
         delay 0.6
