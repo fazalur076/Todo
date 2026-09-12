@@ -37,13 +37,12 @@ public struct TaskRowView: View {
 
     public var body: some View {
         HStack(alignment: .center, spacing: 10) {
-            // Reorder drag indicator on hover
-            if isHovered {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 10)
-            }
+            // Reorder drag indicator: always visible for stable layout and clear affordance
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .opacity(isHovered ? 0.9 : 0.4)
+                .frame(width: 12)
 
             // Checkbox button on left: Directly toggles between Completed and Pending
             Button {
