@@ -41,18 +41,21 @@ def get_notes_tasks():
                 break
 
         clean_text = text.encode('latin1').decode('unicode_escape', 'ignore').encode('latin1').decode('utf-8', 'ignore')
-        raw_lines = clean_text.split('\n')
+        raw_lines = clean_text.replace('\r', '\n').replace('\u2028', '\n').split('\n')
 
-        # Check styles for checklist items and checked state
-        blocks = out_str.split('    5 {')
-        checked_indices = set()
-        for i, b in enumerate(blocks[1:]):
-            if '1: 14' in b and '4: 1' in b:
-                checked_indices.add(i)
+        # Check styles for native checklist items (1: 103) and checked state (subfield 5 has 2: 1)
+        import re
+        raw_blocks = re.split(r'\n    5 \{', out_str)
+        checklist_blocks = []
+        for b in raw_blocks[1:]:
+            if '1: 103' in b:
+                is_checked = bool(re.search(r'5\s*\{[^}]*2:\s*1', b))
+                checklist_blocks.append(is_checked)
 
         results = []
         current_ws = 'work'
-        for i, l in enumerate(raw_lines):
+        chk_idx = 0
+        for l in raw_lines:
             line = l.strip()
             if not line:
                 continue
@@ -66,7 +69,12 @@ def get_notes_tasks():
             if 'TASKS' in u or 'TODAY' in u or 'NO ACTIVE TASKS' in u or 'UPDATED ' in u:
                 continue
 
-            is_checked = (i in checked_indices) or line.startswith('✓') or line.startswith('☑') or line.startswith('[x]') or line.startswith('[X]')
+            block_checked = False
+            if chk_idx < len(checklist_blocks):
+                block_checked = checklist_blocks[chk_idx]
+                chk_idx += 1
+
+            is_checked = block_checked or line.startswith('✓') or line.startswith('☑') or line.startswith('[x]') or line.startswith('[X]')
             title = line.lstrip('✓☑○◯⚪️•*-[ ] ').strip()
             if title.lower().startswith('[work]'):
                 current_ws = 'work'

@@ -171,8 +171,8 @@ public final class NotesSyncService {
             }
 
             if let task = matching {
-                // Protect tasks modified locally in the app within the last 20 seconds from being reverted by stale notes
-                let isRecentlyModifiedLocally = Date().timeIntervalSince(task.updatedAt) < 20
+                // Protect tasks modified locally in the app within the last 2 seconds from race conditions
+                let isRecentlyModifiedLocally = Date().timeIntervalSince(task.updatedAt) < 2
                 if !isRecentlyModifiedLocally {
                     if item.isCompleted && task.status != .completed {
                         task.status = .completed
@@ -350,58 +350,19 @@ public final class NotesSyncService {
         let workTasks = allTasks.filter { $0.workspace == .work && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue) }
         let personalTasks = allTasks.filter { $0.workspace == .personal && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue) }
 
-        // If openNotes is false (e.g. background/auto-sync), or if accessibility is not granted:
-        // Update silently via HTML without stealing focus or interrupting mobile editing!
-        if !openNotes || !AXIsProcessTrusted() {
-            if !AXIsProcessTrusted() && openNotes {
-                Self.requestAccessibilityPermission()
-            }
-            try await syncViaHTML(from: context, activate: openNotes)
-            self.lastSyncTime = Date()
-            return
-        }
-
-        // When openNotes is explicitly true and Accessibility is granted, format with native checklist keystrokes
-        do {
-            try await syncViaKeystrokes(workTasks: workTasks, personalTasks: personalTasks)
-        } catch {
+        // We ALWAYS format using native checklist keystrokes so Apple Notes uses true interactive circles.
+        if AXIsProcessTrusted() {
+            try await syncViaKeystrokes(workTasks: workTasks, personalTasks: personalTasks, activate: openNotes)
+        } else {
             Self.requestAccessibilityPermission()
-            try await syncViaHTML(from: context, activate: true)
+            try await syncViaKeystrokes(workTasks: workTasks, personalTasks: personalTasks, activate: openNotes)
         }
 
         self.lastSyncTime = Date()
     }
 
-    private func syncViaHTML(from context: ModelContext, activate: Bool = false) async throws {
-        let (_, _, htmlBody) = buildNotesContent(from: context)
-        let escapedBody = htmlBody.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        let activateCmd = activate ? "reopen\nactivate" : ""
-        let showCmd = activate ? "show item 1 of (notes of default account whose name is noteTitle)" : ""
-        let scriptSource = """
-        tell application "Notes"
-            \(activateCmd)
-            set noteTitle to "TASKS — TODAY"
-            set noteHTML to "\(escapedBody)"
-            set targetNotes to (notes of folder "Notes" of default account whose name is noteTitle)
-            if (count of targetNotes) = 0 then
-                set targetNotes to (notes of default account whose name is noteTitle)
-            end if
-            if (count of targetNotes) = 0 then
-                try
-                    make new note at default account with properties {name:noteTitle, body:noteHTML}
-                on error
-                    make new note with properties {name:noteTitle, body:noteHTML}
-                end try
-            else
-                set body of item 1 of targetNotes to noteHTML
-            end if
-            \(showCmd)
-        end tell
-        """
-        try await executeScript(scriptSource)
-    }
-
-    private func syncViaKeystrokes(workTasks: [TaskItem], personalTasks: [TaskItem]) async throws {
+    private func syncViaKeystrokes(workTasks: [TaskItem], personalTasks: [TaskItem], activate: Bool = true) async throws {
+        let frontmostApp = NSWorkspace.shared.frontmostApplication
         let escapeAppleScript: (String) -> String = { str in
             str.replacingOccurrences(of: "\\", with: "\\\\")
                .replacingOccurrences(of: "\"", with: "\\\"")
@@ -552,6 +513,9 @@ public final class NotesSyncService {
         """)
 
         try await executeScript(scriptLines.joined(separator: "\n"))
+        if !activate {
+            frontmostApp?.activate()
+        }
     }
 
     private func executeScript(_ source: String) async throws {
