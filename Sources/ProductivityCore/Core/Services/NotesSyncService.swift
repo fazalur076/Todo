@@ -185,6 +185,19 @@ public final class NotesSyncService {
         let allTasksDescriptor = FetchDescriptor<TaskItem>()
         let existingTasks = (try? context.fetch(allTasksDescriptor)) ?? []
 
+        // Purge any corrupted header tasks that might have previously slipped into the DB
+        var purgedAny = false
+        for task in existingTasks {
+            let clean = task.title.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            if clean == "TASKS — TODAY" || clean == "WORK" || clean == "PERSONAL" || clean == "NO ACTIVE TASKS" || clean.contains("TASKS — TODAY") {
+                context.delete(task)
+                purgedAny = true
+            }
+        }
+        if purgedAny {
+            try? context.save()
+        }
+
         if parsedItems.isEmpty {
             // If the note was deleted and not found in Notes, recreate it from the app!
             if !existingTasks.isEmpty {
@@ -200,10 +213,16 @@ public final class NotesSyncService {
         var addedCount = 0
         var updatedCount = 0
         var seenTitles = Set(existingTasks.map { "\($0.workspace.rawValue)::\($0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())" })
+        let reservedHeaders: Set<String> = ["WORK", "PERSONAL", "TASKS — TODAY", "TASKS - TODAY", "NO ACTIVE TASKS", "TASKS"]
 
         for item in parsedItems {
             let cleanTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanTitle.isEmpty else { continue }
+            let upper = cleanTitle.uppercased()
+            if reservedHeaders.contains(upper) || upper.contains("TASKS — TODAY") || upper.contains("TASKS - TODAY") {
+                continue
+            }
+
             let key = "\(item.workspace.rawValue)::\(cleanTitle.lowercased())"
 
             let matching = existingTasks.first {
@@ -414,13 +433,7 @@ public final class NotesSyncService {
         _ = AXIsProcessTrustedWithOptions(promptOption)
     }
 
-    public func syncToNotes(from context: ModelContext, openNotes: Bool = true) async throws {
-        // Accessibility Permission Guard: Do not attempt automation if permission is not granted
-        guard AXIsProcessTrusted() else {
-            lastSyncError = "Notes update option not allowed. Please grant Accessibility permission in System Settings."
-            return
-        }
-
+    public func syncToNotes(from context: ModelContext, openNotes: Bool = false) async throws {
         // Concurrency Guard: Prevent parallel colliding sync requests
         if isSyncing {
             hasPendingSyncRequest = true
@@ -446,33 +459,21 @@ public final class NotesSyncService {
             }
         }
 
-        let taskDescriptor = FetchDescriptor<TaskItem>(
-            sortBy: [SortDescriptor(\.sortOrder)]
-        )
-        let allTasks = (try? context.fetch(taskDescriptor)) ?? []
-
         let content = buildNotesContent(from: context)
-        let workTasks = allTasks.filter { $0.workspace == .work && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
-        let personalTasks = allTasks.filter { $0.workspace == .personal && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
-
-        try await syncViaKeystrokes(workTasks: workTasks, personalTasks: personalTasks, htmlBody: content.htmlBody, activate: openNotes)
+        try await syncDirectlyToNotes(htmlBody: content.htmlBody, openNotes: openNotes)
         self.lastSyncTime = Date()
     }
 
-    private func syncViaKeystrokes(workTasks: [TaskItem], personalTasks: [TaskItem], htmlBody: String, activate: Bool = true) async throws {
-        let frontmostApp = NSWorkspace.shared.frontmostApplication
+    /// Pure backend AppleScript sync: updates Apple Notes silently in the background
+    /// with ZERO keystrokes, ZERO focus stealing, and ZERO typing on the frontend.
+    private func syncDirectlyToNotes(htmlBody: String, openNotes: Bool = false) async throws {
         let escapeAppleScript: (String) -> String = { str in
             str.replacingOccurrences(of: "\\", with: "\\\\")
                .replacingOccurrences(of: "\"", with: "\\\"")
         }
 
-        let cleanBody = htmlBody.replacingOccurrences(of: "<div><b><span style=\"font-size: 22px;\">TASKS — TODAY</span></b></div><div><br></div>", with: "<div><br></div>")
-
-        var scriptLines: [String] = []
-        scriptLines.append("""
+        let scriptSource = """
         tell application "Notes"
-            reopen
-            activate
             set noteTitle to "TASKS — TODAY"
             set activeNotes to {}
             repeat with n in (notes whose name is noteTitle)
@@ -483,152 +484,22 @@ public final class NotesSyncService {
                     end if
                 end try
             end repeat
+
             if (count of activeNotes) = 0 then
                 try
-                    make new note at default account with properties {name:noteTitle, body:"\(escapeAppleScript(cleanBody))"}
+                    make new note at default account with properties {name:noteTitle, body:"\(escapeAppleScript(htmlBody))"}
                 on error
-                    make new note with properties {name:noteTitle, body:"\(escapeAppleScript(cleanBody))"}
+                    make new note with properties {name:noteTitle, body:"\(escapeAppleScript(htmlBody))"}
                 end try
-                set activeNotes to {}
-                repeat with n in (notes whose name is noteTitle)
-                    try
-                        set c to container of n
-                        if (name of c) is not "Recently Deleted" then
-                            set end of activeNotes to n
-                        end if
-                    end try
-                end repeat
+            else
+                set theNote to item 1 of activeNotes
+                set body of theNote to "\(escapeAppleScript(htmlBody))"
             end if
-            show item 1 of activeNotes
+            \(openNotes ? "show item 1 of (notes whose name is noteTitle)" : "")
         end tell
+        """
 
-        delay 0.6
-
-        tell application "System Events"
-            tell process "Notes"
-                repeat with w in (every window whose role is "AXWindow")
-                    set targetTA to missing value
-                    try
-                        set taList to (every text area of scroll area 3 of splitter group 1 of w)
-                        if (count of taList) > 0 then
-                            set targetTA to item 1 of taList
-                        end if
-                    end try
-                    if targetTA is missing value then
-                        try
-                            set taList to (every text area of scroll area 2 of splitter group 1 of w)
-                            if (count of taList) > 0 then
-                                set targetTA to item 1 of taList
-                            end if
-                        end try
-                    end if
-
-                    if targetTA is not missing value then
-                        set focused of targetTA to true
-                        delay 0.1
-                        keystroke "a" using {command down}
-                        key code 51 -- delete
-                        delay 0.05
-
-                        -- Title
-                        keystroke "TASKS — TODAY"
-                        key code 36
-                        key code 36
-
-                        -- WORK Section
-                        keystroke "WORK"
-                        key code 36
-        """)
-
-        if workTasks.isEmpty {
-            scriptLines.append("""
-                        keystroke "No active tasks"
-                        key code 36
-                        key code 36
-            """)
-        } else {
-            scriptLines.append("""
-                        delay 0.1
-                        keystroke "l" using {shift down, command down} -- Start checklist
-                        delay 0.1
-            """)
-            for task in workTasks {
-                let escaped = escapeAppleScript(task.title)
-                scriptLines.append("""
-                        keystroke "\(escaped)"
-                """)
-                if task.status == .completed {
-                    scriptLines.append("""
-                        delay 0.05
-                        keystroke "u" using {shift down, command down} -- Mark as Checked
-                        delay 0.05
-                    """)
-                }
-                scriptLines.append("""
-                        key code 36
-                        delay 0.08
-                """)
-            }
-            scriptLines.append("""
-                        delay 0.1
-                        keystroke "l" using {shift down, command down} -- Stop checklist
-                        delay 0.1
-                        key code 36
-            """)
-        }
-
-        scriptLines.append("""
-                        -- PERSONAL Section
-                        keystroke "PERSONAL"
-                        key code 36
-        """)
-
-        if personalTasks.isEmpty {
-            scriptLines.append("""
-                        keystroke "No active tasks"
-                        key code 36
-            """)
-        } else {
-            scriptLines.append("""
-                        delay 0.1
-                        keystroke "l" using {shift down, command down} -- Start checklist
-                        delay 0.1
-            """)
-            for task in personalTasks {
-                let escaped = escapeAppleScript(task.title)
-                scriptLines.append("""
-                        keystroke "\(escaped)"
-                """)
-                if task.status == .completed {
-                    scriptLines.append("""
-                        delay 0.05
-                        keystroke "u" using {shift down, command down} -- Mark as Checked
-                        delay 0.05
-                    """)
-                }
-                scriptLines.append("""
-                        key code 36
-                        delay 0.08
-                """)
-            }
-            scriptLines.append("""
-                        delay 0.1
-                        keystroke "l" using {shift down, command down} -- Stop checklist
-            """)
-        }
-
-        scriptLines.append("""
-                        exit repeat
-                    end if
-                end repeat
-            end tell
-        end tell
-        """)
-
-        try await executeScript(scriptLines.joined(separator: "\n"))
-        if !activate {
-            frontmostApp?.activate()
-        }
+        try await executeScript(scriptSource)
     }
 
     private func executeScript(_ source: String) async throws {
@@ -654,6 +525,8 @@ public final class NotesSyncService {
     public func parseNotesBody(_ raw: String) -> [(title: String, workspace: Workspace, isCompleted: Bool)] {
         var results: [(String, Workspace, Bool)] = []
         var currentWorkspace: Workspace = .work
+        let reservedHeaders: Set<String> = ["WORK", "PERSONAL", "TASKS — TODAY", "TASKS - TODAY", "NO ACTIVE TASKS", "TASKS"]
+        var seenTitles: Set<String> = []
 
         let normalized = raw
             .replacingOccurrences(of: "<br>", with: "\n", options: .caseInsensitive)
@@ -663,6 +536,9 @@ public final class NotesSyncService {
             .replacingOccurrences(of: "</p>", with: "\n", options: .caseInsensitive)
 
         let lines = normalized.components(separatedBy: "\n")
+        let checkPrefixes = ["☑", "●", "[x]", "[X]", "✓", "✔"]
+        let uncheckPrefixes = ["☐", "○", "◯", "⚪️", "[ ]", "-", "*", "•"]
+
         for rawLine in lines {
             let isStrike = rawLine.localizedCaseInsensitiveContains("<strike>") ||
                            rawLine.localizedCaseInsensitiveContains("line-through") ||
@@ -673,25 +549,8 @@ public final class NotesSyncService {
             line = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if line.isEmpty { continue }
 
-            let upper = line.uppercased()
-            if upper == "TASKS — TODAY" || upper.contains("UPDATED ") { continue }
-            if upper == "WORK" {
-                currentWorkspace = .work
-                continue
-            }
-            if upper == "PERSONAL" {
-                currentWorkspace = .personal
-                continue
-            }
-            if upper == "NO ACTIVE TASKS" {
-                continue
-            }
-
             var isCompleted = isStrike
             var cleanTitle = line
-
-            let checkPrefixes = ["☑", "●", "[x]", "[X]", "✓", "✔"]
-            let uncheckPrefixes = ["☐", "○", "◯", "⚪️", "[ ]", "-", "*", "•"]
 
             for p in checkPrefixes {
                 if cleanTitle.hasPrefix(p) {
@@ -708,6 +567,21 @@ public final class NotesSyncService {
             }
 
             cleanTitle = cleanTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleanTitle.isEmpty { continue }
+
+            let upper = cleanTitle.uppercased()
+            if upper == "WORK" || upper.hasPrefix("WORK:") || upper == "WORK TASKS" {
+                currentWorkspace = .work
+                continue
+            }
+            if upper == "PERSONAL" || upper.hasPrefix("PERSONAL:") || upper == "PERSONAL TASKS" {
+                currentWorkspace = .personal
+                continue
+            }
+            if reservedHeaders.contains(upper) || upper.contains("TASKS — TODAY") || upper.contains("TASKS - TODAY") || upper.contains("UPDATED ") || upper.hasPrefix("NO ACTIVE") {
+                continue
+            }
+
             if cleanTitle.hasPrefix("[Work]") || cleanTitle.hasPrefix("[work]") {
                 currentWorkspace = .work
                 cleanTitle = String(cleanTitle.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -716,9 +590,17 @@ public final class NotesSyncService {
                 cleanTitle = String(cleanTitle.dropFirst(10)).trimmingCharacters(in: .whitespacesAndNewlines)
             }
 
-            if !cleanTitle.isEmpty {
-                results.append((cleanTitle, currentWorkspace, isCompleted))
+            if cleanTitle.isEmpty || reservedHeaders.contains(cleanTitle.uppercased()) {
+                continue
             }
+
+            let dedupKey = "\(currentWorkspace.rawValue)::\(cleanTitle.lowercased())"
+            if seenTitles.contains(dedupKey) {
+                continue
+            }
+            seenTitles.insert(dedupKey)
+
+            results.append((cleanTitle, currentWorkspace, isCompleted))
         }
         return results
     }

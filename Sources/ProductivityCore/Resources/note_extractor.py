@@ -55,18 +55,29 @@ def get_notes_tasks():
         results = []
         current_ws = 'work'
         chk_idx = 0
+        reserved_headers = {'WORK', 'PERSONAL', 'TASKS', 'TODAY', 'NO ACTIVE TASKS'}
+        seen_titles = set()
+
         for l in raw_lines:
             line = l.strip()
             if not line:
                 continue
-            u = line.upper()
-            if u == 'WORK':
+
+            # Strip all list/checklist/bullet/emoji prefixes first to inspect the true content
+            clean_title = line.lstrip('✓☑○◯⚪️•*-[ ] 	').strip()
+            if not clean_title:
+                continue
+
+            u = clean_title.upper()
+            if u == 'WORK' or u.startswith('WORK:') or u == 'WORK TASKS':
                 current_ws = 'work'
                 continue
-            if u == 'PERSONAL':
+            if u == 'PERSONAL' or u.startswith('PERSONAL:') or u == 'PERSONAL TASKS':
                 current_ws = 'personal'
                 continue
-            if 'TASKS' in u or 'TODAY' in u or 'NO ACTIVE TASKS' in u or 'UPDATED ' in u:
+            if 'TASKS — TODAY' in u or 'TASKS - TODAY' in u or u in reserved_headers or 'UPDATED ' in u:
+                continue
+            if u.startswith('NO ACTIVE'):
                 continue
 
             block_checked = False
@@ -75,20 +86,28 @@ def get_notes_tasks():
                 chk_idx += 1
 
             is_checked = block_checked or line.startswith('✓') or line.startswith('☑') or line.startswith('[x]') or line.startswith('[X]')
-            title = line.lstrip('✓☑○◯⚪️•*-[ ] ').strip()
-            if title.lower().startswith('[work]'):
+            
+            if clean_title.lower().startswith('[work]'):
                 current_ws = 'work'
-                title = title[6:].strip()
-            elif title.lower().startswith('[personal]'):
+                clean_title = clean_title[6:].strip()
+            elif clean_title.lower().startswith('[personal]'):
                 current_ws = 'personal'
-                title = title[10:].strip()
+                clean_title = clean_title[10:].strip()
 
-            if title:
-                results.append({
-                    'title': title,
-                    'workspace': current_ws,
-                    'completed': is_checked
-                })
+            clean_title = clean_title.strip()
+            if not clean_title or clean_title.upper() in reserved_headers:
+                continue
+
+            dedup_key = f"{current_ws}::{clean_title.lower()}"
+            if dedup_key in seen_titles:
+                continue
+            seen_titles.add(dedup_key)
+
+            results.append({
+                'title': clean_title,
+                'workspace': current_ws,
+                'completed': is_checked
+            })
 
         return results
     except Exception as e:

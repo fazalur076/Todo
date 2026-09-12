@@ -580,16 +580,6 @@ public struct TaskListView: View {
     }
 
     private func triggerNotesSync() {
-        if !NotesSyncService.isAccessibilityGranted {
-            withAnimation {
-                notesToastMessage = "Notes update option not allowed. Please grant Accessibility permission in System Settings."
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-                withAnimation { notesToastMessage = nil }
-            }
-            return
-        }
-
         isSyncingNotes = true
         Task {
             do {
@@ -598,7 +588,7 @@ public struct TaskListView: View {
                     if result.added > 0 || result.updated > 0 {
                         notesToastMessage = "Synced with Notes! (+\(result.added) new, \(result.updated) updated) 📝"
                     } else {
-                        notesToastMessage = "Synced with Apple Notes! (Native Checklists ◯)"
+                        notesToastMessage = "Synced with Apple Notes! 📝"
                     }
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
