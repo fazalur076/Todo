@@ -53,7 +53,7 @@ public struct EODView: View {
                 historyEODView
             }
         }
-        .frame(width: 480, height: 500)
+        .frame(width: 440, height: 500)
         .background(.ultraThinMaterial)
         .onAppear {
             loadTodayReport()

@@ -45,6 +45,10 @@ public final class MenuBarController: NSObject {
         AppState.shared.toggleMainPanelHandler = { [weak self] in
             self?.toggleMainPanel()
         }
+
+        AppState.shared.openMainPanelHandler = { [weak self] in
+            self?.openMainPanel()
+        }
     }
 
     public func toggleMainPanel() {
@@ -198,13 +202,12 @@ public final class MenuBarController: NSObject {
 
     private func updateStatusItemAppearance(button: NSStatusBarButton) {
         let focusService = FocusService.shared
-        let appState = AppState.shared
 
         if focusService.isRunning || focusService.state != .idle {
             button.image = NSImage(systemSymbolName: "timer", accessibilityDescription: "Focus Timer")
             button.title = " \(focusService.formattedTimeRemaining)"
         } else {
-            button.image = NSImage(systemSymbolName: appState.currentWorkspace.iconName, accessibilityDescription: appState.currentWorkspace.displayName)
+            button.image = NSImage(systemSymbolName: "checklist", accessibilityDescription: "Productivity")
             button.title = ""
         }
     }

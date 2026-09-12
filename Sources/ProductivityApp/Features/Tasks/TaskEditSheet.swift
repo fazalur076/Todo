@@ -7,17 +7,28 @@ public struct TaskEditSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
+    var onClose: (() -> Void)?
+
     @State private var title: String
     @State private var notes: String
     @State private var status: TaskStatus
     @State private var scheduledDate: Date
 
-    public init(task: TaskItem) {
+    public init(task: TaskItem, onClose: (() -> Void)? = nil) {
         self.task = task
+        self.onClose = onClose
         _title = State(initialValue: task.title)
         _notes = State(initialValue: task.notes ?? "")
         _status = State(initialValue: task.status)
         _scheduledDate = State(initialValue: task.scheduledDate)
+    }
+
+    private func handleDismiss() {
+        if let onClose = onClose {
+            onClose()
+        } else {
+            dismiss()
+        }
     }
 
     public var body: some View {
@@ -25,15 +36,6 @@ public struct TaskEditSheet: View {
             // Header Bar
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(task.workspace == .work ? Color.blue : Color.green)
-                            .frame(width: 8, height: 8)
-                        Text(task.workspace.displayName.uppercased())
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundStyle(task.workspace == .work ? .blue : .green)
-                    }
-
                     Text("Edit Task")
                         .font(.system(size: 18, weight: .bold))
                 }
@@ -41,7 +43,7 @@ public struct TaskEditSheet: View {
                 Spacer()
 
                 Button {
-                    dismiss()
+                    handleDismiss()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 18))
@@ -192,13 +194,13 @@ public struct TaskEditSheet: View {
                 Spacer()
 
                 Button("Cancel") {
-                    dismiss()
+                    handleDismiss()
                 }
                 .keyboardShortcut(.cancelAction)
 
                 Button("Save Changes") {
                     saveChanges()
-                    dismiss()
+                    handleDismiss()
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
@@ -207,7 +209,8 @@ public struct TaskEditSheet: View {
             .padding(.vertical, 14)
             .background(Color.primary.opacity(0.02))
         }
-        .frame(width: 500, height: 480)
+        .frame(width: 440, height: 480)
+        .background(.ultraThinMaterial)
     }
 
     private var isToday: Bool {

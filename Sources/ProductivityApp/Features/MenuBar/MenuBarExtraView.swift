@@ -9,7 +9,7 @@ public struct MenuBarExtraView: View {
 
     public var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: appState.currentWorkspace.iconName)
+            Image(systemName: (focusService.isRunning || focusService.state != .idle) ? "timer" : "checklist")
                 .renderingMode(.template)
 
             if focusService.isRunning || focusService.state != .idle {

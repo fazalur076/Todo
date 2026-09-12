@@ -105,17 +105,64 @@ public struct TaskListView: View {
             // Silently pull any new or updated tasks from Apple Notes
             _ = try? await NotesSyncService.shared.pullFromNotes(context: modelContext)
         }
-        .sheet(item: $taskToEdit) { task in
-            TaskEditSheet(task: task)
-        }
-        .sheet(isPresented: $showFocusSheet) {
-            FocusView(onClose: { showFocusSheet = false })
-        }
-        .sheet(isPresented: $showEODSheet) {
-            EODView(onClose: { showEODSheet = false })
-        }
-        .sheet(isPresented: $showSettingsSheet) {
-            SettingsView(onClose: { showSettingsSheet = false })
+        .overlay {
+            if showSettingsSheet {
+                ZStack {
+                    Color.black.opacity(0.45)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.easeInOut(duration: 0.16)) { showSettingsSheet = false }
+                        }
+                    SettingsView(onClose: {
+                        withAnimation(.easeInOut(duration: 0.16)) { showSettingsSheet = false }
+                    })
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .shadow(color: .black.opacity(0.35), radius: 24, y: 12)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            } else if showFocusSheet {
+                ZStack {
+                    Color.black.opacity(0.45)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.easeInOut(duration: 0.16)) { showFocusSheet = false }
+                        }
+                    FocusView(onClose: {
+                        withAnimation(.easeInOut(duration: 0.16)) { showFocusSheet = false }
+                    })
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .shadow(color: .black.opacity(0.35), radius: 24, y: 12)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            } else if showEODSheet {
+                ZStack {
+                    Color.black.opacity(0.45)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.easeInOut(duration: 0.16)) { showEODSheet = false }
+                        }
+                    EODView(onClose: {
+                        withAnimation(.easeInOut(duration: 0.16)) { showEODSheet = false }
+                    })
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .shadow(color: .black.opacity(0.35), radius: 24, y: 12)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            } else if let task = taskToEdit {
+                ZStack {
+                    Color.black.opacity(0.45)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.easeInOut(duration: 0.16)) { taskToEdit = nil }
+                        }
+                    TaskEditSheet(task: task, onClose: {
+                        withAnimation(.easeInOut(duration: 0.16)) { taskToEdit = nil }
+                    })
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .shadow(color: .black.opacity(0.35), radius: 24, y: 12)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            }
         }
         .confirmationDialog(
             "Move all unfinished tasks to tomorrow?",
@@ -127,44 +174,26 @@ public struct TaskListView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This will reschedule all \(unfinishedTasks.count) pending and in-progress \(appState.currentWorkspace.displayName) tasks to tomorrow.")
+            Text("This will reschedule all \(unfinishedTasks.count) unfinished tasks to tomorrow.")
         }
     }
 
     // MARK: - Header
     private var headerView: some View {
         HStack(alignment: .center) {
-            HStack(spacing: 8) {
-                Image(systemName: appState.currentWorkspace.iconName)
-                    .font(.system(size: 13, weight: .bold))
-                Text(appState.currentWorkspace.displayName.uppercased())
-                    .font(.system(size: 13, weight: .bold, design: .monospaced))
-                    .tracking(1.5)
-            }
-            .foregroundStyle(appState.currentWorkspace.accentColor)
+            Text("TODAY")
+                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                .tracking(1.5)
+                .foregroundStyle(.primary)
 
             Spacer()
-
-            // Workspace toggle switcher
-            Picker("", selection: Binding(
-                get: { appState.currentWorkspace },
-                set: { newWorkspace in
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        appState.currentWorkspace = newWorkspace
-                    }
-                }
-            )) {
-                ForEach(Workspace.allCases, id: \.self) { ws in
-                    Text(ws.displayName).tag(ws)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 140)
 
             HStack(spacing: 6) {
                 // Focus session shortcut
                 Button {
-                    showFocusSheet = true
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        showFocusSheet = true
+                    }
                 } label: {
                     Image(systemName: "timer")
                         .font(.system(size: 12))
@@ -179,18 +208,11 @@ public struct TaskListView: View {
 
                 // More Menu
                 Menu {
-                    Button("Work Workspace (⌥⌘W)") {
-                        appState.currentWorkspace = .work
-                    }
-                    Button("Personal Workspace (⌥⌘P)") {
-                        appState.currentWorkspace = .personal
-                    }
-                    Divider()
                     Button("Sync with Notes Now") {
                         triggerNotesSync()
                     }
-                    if appState.currentWorkspace == .work {
-                        Button("Generate EOD Report...") {
+                    Button("Generate EOD Report...") {
+                        withAnimation(.easeInOut(duration: 0.16)) {
                             showEODSheet = true
                         }
                     }
@@ -201,7 +223,9 @@ public struct TaskListView: View {
                     .disabled(unfinishedTasks.isEmpty)
                     Divider()
                     Button("Settings...") {
-                        showSettingsSheet = true
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            showSettingsSheet = true
+                        }
                     }
                     if let onClose = onClose {
                         Divider()
@@ -235,9 +259,9 @@ public struct TaskListView: View {
         HStack(spacing: 10) {
             Image(systemName: "plus.circle")
                 .font(.system(size: 15))
-                .foregroundStyle(appState.currentWorkspace.accentColor)
+                .foregroundStyle(.secondary)
 
-            TextField("Add a task to \(appState.currentWorkspace.displayName)...", text: $newTaskTitle)
+            TextField("Add a task...", text: $newTaskTitle)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .focused($isInlineAddFocused)
@@ -253,7 +277,7 @@ public struct TaskListView: View {
                         .font(.system(size: 11, weight: .semibold))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(appState.currentWorkspace.accentColor)
+                        .background(Color.accentColor)
                         .foregroundStyle(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
@@ -294,13 +318,13 @@ public struct TaskListView: View {
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
-                    .background(isSelected ? appState.currentWorkspace.accentColor.opacity(0.2) : Color.primary.opacity(0.06))
+                    .background(isSelected ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.06))
                     .clipShape(Capsule())
             }
-            .foregroundStyle(isSelected ? appState.currentWorkspace.accentColor : .secondary)
+            .foregroundStyle(isSelected ? Color.accentColor : .secondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(isSelected ? appState.currentWorkspace.accentColor.opacity(0.1) : Color.clear)
+            .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
@@ -315,7 +339,7 @@ public struct TaskListView: View {
                     Image(systemName: "checkmark.seal")
                         .font(.system(size: 32))
                         .foregroundStyle(.tertiary)
-                    Text("No \(filterStatus?.displayName.lowercased() ?? "") tasks in \(appState.currentWorkspace.displayName)")
+                    Text("No \(filterStatus?.displayName.lowercased() ?? "") tasks")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.secondary)
                     Text("Press ⌘N or ⌥ Space to add a task")
@@ -432,7 +456,7 @@ public struct TaskListView: View {
                     Text("Notes")
                         .font(.system(size: 12, weight: .medium))
                 }
-                .foregroundStyle(isSyncingNotes ? appState.currentWorkspace.accentColor : .secondary)
+                .foregroundStyle(isSyncingNotes ? Color.accentColor : .secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(Color.primary.opacity(0.06))
@@ -443,27 +467,27 @@ public struct TaskListView: View {
             .disabled(isSyncingNotes)
             .help("Two-way sync with Apple Notes")
 
-            // EOD generator (Work workspace only)
-            if appState.currentWorkspace == .work {
-                Button {
+            // EOD generator
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
                     showEODSheet = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "doc.text.fill")
-                            .font(.system(size: 11))
-                        Text("EOD")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.primary.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
-                .buttonStyle(.plain)
-                .focusEffectDisabled()
-                .help("Generate End-of-Day summary")
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "doc.text.fill")
+                        .font(.system(size: 11))
+                    Text("EOD")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.primary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
+            .buttonStyle(.plain)
+            .focusEffectDisabled()
+            .help("Generate End-of-Day summary")
 
             // Quick Move to Tomorrow button
             if !unfinishedTasks.isEmpty {

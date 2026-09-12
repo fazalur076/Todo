@@ -42,6 +42,7 @@ public final class AppState {
     public var isMoveUnfinishedAlertPresented: Bool = false
     public var toggleQuickCaptureHandler: (() -> Void)? = nil
     public var toggleMainPanelHandler: (() -> Void)? = nil
+    public var openMainPanelHandler: (() -> Void)? = nil
 
     private init() {
         let alwaysWork = UserDefaults.standard.bool(forKey: "alwaysLaunchInWork")
@@ -75,12 +76,12 @@ public final class AppState {
 
         ShortcutService.shared.onSwitchToWork = { [weak self] in
             self?.switchToWorkspace(.work)
-            self?.toggleMainPanelHandler?()
+            self?.openMainPanelHandler?()
         }
 
         ShortcutService.shared.onSwitchToPersonal = { [weak self] in
             self?.switchToWorkspace(.personal)
-            self?.toggleMainPanelHandler?()
+            self?.openMainPanelHandler?()
         }
 
         ShortcutService.shared.onToggleMainPanel = { [weak self] in

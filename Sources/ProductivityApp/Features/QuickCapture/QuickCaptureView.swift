@@ -18,19 +18,12 @@ public struct QuickCaptureView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Header: Workspace badge & Action hint
+            // Header: Action hint
             HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: appState.currentWorkspace.iconName)
-                        .font(.system(size: 11, weight: .bold))
-                    Text(appState.currentWorkspace.displayName.uppercased())
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                }
-                .foregroundStyle(appState.currentWorkspace.accentColor)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(appState.currentWorkspace.accentColor.opacity(0.15))
-                .clipShape(Capsule())
+                Text("QUICK CAPTURE")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .tracking(1.2)
 
                 Spacer()
 
@@ -51,7 +44,7 @@ public struct QuickCaptureView: View {
             HStack(spacing: 12) {
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(appState.currentWorkspace.accentColor)
+                    .foregroundStyle(Color.accentColor)
 
                 TextField("What needs doing?", text: $taskTitle)
                     .font(.system(size: 18, weight: .medium, design: .default))
@@ -110,7 +103,7 @@ public struct QuickCaptureView: View {
                         .background(
                             taskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             ? Color.gray.opacity(0.4)
-                            : appState.currentWorkspace.accentColor
+                            : Color.accentColor
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }

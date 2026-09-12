@@ -44,13 +44,6 @@ public class FloatingPanel<Content: View>: NSPanel {
         ])
 
         self.contentView = visualEffect
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleResignKey),
-            name: NSWindow.didResignKeyNotification,
-            object: self
-        )
     }
 
     private var clickEventMonitor: Any?
@@ -86,10 +79,6 @@ public class FloatingPanel<Content: View>: NSPanel {
             NSEvent.removeMonitor(monitor)
             clickEventMonitor = nil
         }
-    }
-
-    @objc private func handleResignKey() {
-        self.close()
     }
 
     public override var canBecomeKey: Bool {
