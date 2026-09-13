@@ -73,35 +73,31 @@ public final class NotesSyncService {
         let plainText = plain.joined(separator: "\n")
 
         // HTML version for Apple Notes formatted cleanly under WORK and PERSONAL
-        var html = "<div><b><span style=\"font-size: 22px;\">TASKS — TODAY</span></b></div><div><br></div>"
+        var html = "<div><b><span style=\"font-size: 20px;\">TASKS — TODAY</span></b></div><div><br></div>"
         html += "<div><b>WORK</b></div>"
         if workTasks.isEmpty {
             html += "<div><i><font color=\"#8E8E93\">No active tasks</font></i></div>"
         } else {
-            html += "<ul>"
             for task in workTasks {
                 if task.status == .completed {
-                    html += "<li><strike><font color=\"#8E8E93\">✓ \(escapeHtml(task.title))</font></strike></li>"
+                    html += "<div><strike><font color=\"#8E8E93\">✓ \(escapeHtml(task.title))</font></strike></div>"
                 } else {
-                    html += "<li>○ \(escapeHtml(task.title))</li>"
+                    html += "<div>○ \(escapeHtml(task.title))</div>"
                 }
             }
-            html += "</ul>"
         }
         html += "<div><br></div>"
         html += "<div><b>PERSONAL</b></div>"
         if personalTasks.isEmpty {
             html += "<div><i><font color=\"#8E8E93\">No active tasks</font></i></div>"
         } else {
-            html += "<ul>"
             for task in personalTasks {
                 if task.status == .completed {
-                    html += "<li><strike><font color=\"#8E8E93\">✓ \(escapeHtml(task.title))</font></strike></li>"
+                    html += "<div><strike><font color=\"#8E8E93\">✓ \(escapeHtml(task.title))</font></strike></div>"
                 } else {
-                    html += "<li>○ \(escapeHtml(task.title))</li>"
+                    html += "<div>○ \(escapeHtml(task.title))</div>"
                 }
             }
-            html += "</ul>"
         }
 
         return (noteTitle, plainText, html)
@@ -468,21 +464,14 @@ public final class NotesSyncService {
         self.lastSyncTime = Date()
     }
 
-    /// Pure backend AppleScript sync: updates Apple Notes atomically with ZERO letter-by-letter typing.
-    /// When Accessibility is granted, applies native checklist circles via a single instant shortcut and restores your active app immediately.
+    /// Pure backend AppleScript sync: updates Apple Notes atomically in background without focus stealing or keystroke injection.
     private func syncDirectlyToNotes(htmlBody: String, openNotes: Bool = false) async throws {
         let escapeAppleScript: (String) -> String = { str in
             str.replacingOccurrences(of: "\\", with: "\\\\")
                .replacingOccurrences(of: "\"", with: "\\\"")
         }
 
-        let isTrusted = AXIsProcessTrusted()
         var scriptLines: [String] = []
-
-        if isTrusted {
-            scriptLines.append("set previousApp to path to frontmost application as text")
-        }
-
         scriptLines.append("""
         tell application "Notes"
             set noteTitle to "TASKS — TODAY"
@@ -498,9 +487,9 @@ public final class NotesSyncService {
 
             if (count of activeNotes) = 0 then
                 try
-                    make new note at default account with properties {name:noteTitle, body:"\(escapeAppleScript(htmlBody))"}
+                    make new note at default account with properties {body:"\(escapeAppleScript(htmlBody))"}
                 on error
-                    make new note with properties {name:noteTitle, body:"\(escapeAppleScript(htmlBody))"}
+                    make new note with properties {body:"\(escapeAppleScript(htmlBody))"}
                 end try
             else
                 set theNote to item 1 of activeNotes
@@ -508,33 +497,15 @@ public final class NotesSyncService {
             end if
         """)
 
-        if isTrusted {
+        if openNotes {
             scriptLines.append("""
-            show item 1 of (notes whose name is noteTitle)
-        end tell
-
-        tell application "System Events"
-            tell process "Notes"
-                keystroke "a" using {command down}
-                keystroke "l" using {shift down, command down}
-            end tell
-        end tell
-        """)
-            if !openNotes {
-                scriptLines.append("""
-                tell application previousApp to activate
-                """)
-            }
-        } else {
-            if openNotes {
-                scriptLines.append("""
             show item 1 of (notes whose name is noteTitle)
             """)
-            }
-            scriptLines.append("""
+        }
+
+        scriptLines.append("""
         end tell
         """)
-        }
 
         try await executeScript(scriptLines.joined(separator: "\n"))
     }

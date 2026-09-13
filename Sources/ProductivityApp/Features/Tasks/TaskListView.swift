@@ -24,7 +24,6 @@ public struct TaskListView: View {
 
     @State private var isSyncingNotes: Bool = false
     @State private var notesToastMessage: String? = nil
-    @State private var showAccessibilityInfoSheet: Bool = false
 
     public init(onClose: (() -> Void)? = nil) {
         self.onClose = onClose
@@ -62,58 +61,6 @@ public struct TaskListView: View {
         VStack(spacing: 0) {
             // Header Bar
             headerView
-
-            // Accessibility missing warning banner
-            if !NotesSyncService.isAccessibilityGranted {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .font(.system(size: 11))
-                    Text("Notes update option not allowed. Please grant Accessibility permission.")
-                        .font(.system(size: 11, weight: .medium))
-                        .lineLimit(1)
-                    Spacer()
-                    Button {
-                        showAccessibilityInfoSheet = true
-                    } label: {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.blue)
-                    }
-                    .buttonStyle(.plain)
-                    .popover(isPresented: $showAccessibilityInfoSheet) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label("Why Accessibility?", systemImage: "hand.raised.circle")
-                                .font(.headline)
-                            Text("Productivity only uses accessibility shortcuts (⇧⌘L and ⇧⌘U) to format interactive checklist circles in Apple Notes.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text("We do not access, monitor, log, or store your keystrokes, screen, or any other apps.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Button("Open System Settings...") {
-                                let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
-                                NSWorkspace.shared.open(url)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .padding(.top, 4)
-                        }
-                        .padding()
-                        .frame(width: 280)
-                    }
-                    Button("Settings") {
-                        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
-                        NSWorkspace.shared.open(url)
-                    }
-                    .font(.system(size: 10, weight: .medium))
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 5)
-                .background(Color.orange.opacity(0.12))
-            }
 
             // Toast feedback banner
             if let toast = notesToastMessage {

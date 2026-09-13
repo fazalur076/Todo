@@ -177,13 +177,31 @@ public final class MenuBarController: NSObject {
         if event?.type == .rightMouseUp {
             // Right-click options
             let menu = NSMenu()
-            menu.addItem(NSMenuItem(title: "Toggle Main Panel (⌥⌘T)", action: #selector(toggleMainPanelAction), keyEquivalent: ""))
-            menu.addItem(NSMenuItem(title: "Quick Capture (⌥ Space)", action: #selector(triggerQuickCaptureAction), keyEquivalent: ""))
+            menu.autoenablesItems = false
+
+            let itemMain = NSMenuItem(title: "Toggle Main Panel (⌥⌘T)", action: #selector(toggleMainPanelAction), keyEquivalent: "")
+            itemMain.target = self
+            menu.addItem(itemMain)
+
+            let itemCapture = NSMenuItem(title: "Quick Capture (⌥ Space)", action: #selector(triggerQuickCaptureAction), keyEquivalent: "")
+            itemCapture.target = self
+            menu.addItem(itemCapture)
+
             menu.addItem(NSMenuItem.separator())
-            menu.addItem(NSMenuItem(title: "Switch to Work (⌥⌘W)", action: #selector(switchToWorkAction), keyEquivalent: ""))
-            menu.addItem(NSMenuItem(title: "Switch to Personal (⌥⌘P)", action: #selector(switchToPersonalAction), keyEquivalent: ""))
+
+            let itemWork = NSMenuItem(title: "Switch to Work (⌥⌘W)", action: #selector(switchToWorkAction), keyEquivalent: "")
+            itemWork.target = self
+            menu.addItem(itemWork)
+
+            let itemPersonal = NSMenuItem(title: "Switch to Personal (⌥⌘P)", action: #selector(switchToPersonalAction), keyEquivalent: "")
+            itemPersonal.target = self
+            menu.addItem(itemPersonal)
+
             menu.addItem(NSMenuItem.separator())
-            menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitAction), keyEquivalent: "q"))
+
+            let itemQuit = NSMenuItem(title: "Quit", action: #selector(quitAction), keyEquivalent: "q")
+            itemQuit.target = self
+            menu.addItem(itemQuit)
 
             statusItem?.menu = menu
             statusItem?.button?.performClick(nil)

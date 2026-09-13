@@ -53,21 +53,30 @@ public struct SettingsView: View {
                     .tabItem {
                         Label("Notes", systemImage: "note.text")
                     }
-
-                appearanceSettingsTab
-                    .tabItem {
-                        Label("Appearance", systemImage: "paintpalette")
-                    }
             }
             .padding(12)
         }
-        .frame(width: 440, height: 380)
+        .frame(width: 440, height: 400)
         .background(.ultraThinMaterial)
     }
 
     // MARK: - General
     private var generalSettingsTab: some View {
         Form {
+            Section {
+                Picker("Theme", selection: Binding(
+                    get: { appState.appearanceMode },
+                    set: { appState.appearanceMode = $0 }
+                )) {
+                    Text("System").tag("system")
+                    Text("Light").tag("light")
+                    Text("Dark").tag("dark")
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("Appearance")
+            }
+
             Section {
                 Toggle("Launch at Login", isOn: Binding(
                     get: { appState.launchAtLogin },
@@ -264,24 +273,6 @@ public struct SettingsView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    // MARK: - Appearance
-    private var appearanceSettingsTab: some View {
-        Form {
-            Section("Color Scheme") {
-                Picker("Appearance", selection: Binding(
-                    get: { appState.appearanceMode },
-                    set: { appState.appearanceMode = $0 }
-                )) {
-                    Text("System").tag("system")
-                    Text("Light").tag("light")
-                    Text("Dark").tag("dark")
-                }
-                .pickerStyle(.inline)
             }
         }
         .formStyle(.grouped)
