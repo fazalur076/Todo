@@ -56,7 +56,7 @@ cat << 'EOF' > "$APP_BUNDLE/Contents/Info.plist"
 </plist>
 EOF
 
-echo "✍️ Ad-hoc code signing $APP_BUNDLE..."
-codesign --force --deep --sign - "$APP_BUNDLE" 2>/dev/null || true
+echo "✍️ Signing $APP_BUNDLE with stable designated identifier..."
+codesign --force --deep -s - -i com.productivity.app -r='designated => identifier "com.productivity.app"' "$APP_BUNDLE" 2>/dev/null || true
 
 echo "✅ Successfully built: $APP_BUNDLE"

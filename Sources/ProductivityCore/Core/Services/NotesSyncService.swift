@@ -72,7 +72,7 @@ public final class NotesSyncService {
 
         let plainText = plain.joined(separator: "\n")
 
-        // HTML version for Apple Notes formatted cleanly under WORK and PERSONAL
+        // HTML version for Apple Notes: uses <div> lines so ⇧⌘L directly formats into native checklists
         var html = "<div><b><span style=\"font-size: 20px;\">TASKS — TODAY</span></b></div><div><br></div>"
         html += "<div><b>WORK</b></div>"
         if workTasks.isEmpty {
@@ -80,9 +80,9 @@ public final class NotesSyncService {
         } else {
             for task in workTasks {
                 if task.status == .completed {
-                    html += "<div><strike><font color=\"#8E8E93\">✓ \(escapeHtml(task.title))</font></strike></div>"
+                    html += "<div><strike><font color=\"#8E8E93\">\(escapeHtml(task.title))</font></strike></div>"
                 } else {
-                    html += "<div>○ \(escapeHtml(task.title))</div>"
+                    html += "<div>\(escapeHtml(task.title))</div>"
                 }
             }
         }
@@ -93,9 +93,9 @@ public final class NotesSyncService {
         } else {
             for task in personalTasks {
                 if task.status == .completed {
-                    html += "<div><strike><font color=\"#8E8E93\">✓ \(escapeHtml(task.title))</font></strike></div>"
+                    html += "<div><strike><font color=\"#8E8E93\">\(escapeHtml(task.title))</font></strike></div>"
                 } else {
-                    html += "<div>○ \(escapeHtml(task.title))</div>"
+                    html += "<div>\(escapeHtml(task.title))</div>"
                 }
             }
         }
@@ -415,8 +415,8 @@ public final class NotesSyncService {
         // Step 1: Pull from Notes first so mobile edits are preserved in the Mac app
         let result = (try? await pullFromNotes(context: context)) ?? (0, 0)
 
-        // Step 2: Push back ONLY if there are local differences not yet in Notes
-        if needsPushToNotes(context: context) {
+        // Step 2: Push back if local differences exist or if explicitly requested via openNotes
+        if needsPushToNotes(context: context) || openNotes {
             try await syncToNotes(from: context, openNotes: openNotes)
         }
 
@@ -464,7 +464,7 @@ public final class NotesSyncService {
         self.lastSyncTime = Date()
     }
 
-    /// Pure backend AppleScript sync: updates Apple Notes atomically in background without focus stealing or keystroke injection.
+    /// Pure backend AppleScript sync: updates Apple Notes atomically, then applies native checklist format via System Events.
     private func syncDirectlyToNotes(htmlBody: String, openNotes: Bool = false) async throws {
         let escapeAppleScript: (String) -> String = { str in
             str.replacingOccurrences(of: "\\", with: "\\\\")
@@ -508,6 +508,95 @@ public final class NotesSyncService {
         """)
 
         try await executeScript(scriptLines.joined(separator: "\n"))
+
+        // Apply native checklist format via System Events (brief stealth focus switch < 1s)
+        do {
+            try await applyNativeChecklist(openNotes: openNotes)
+            NSLog("✅ NotesSyncService: Native checklist format applied successfully!")
+        } catch {
+            NSLog("⚠️ NotesSyncService: Native checklist format error: %@", error.localizedDescription)
+            self.lastSyncError = error.localizedDescription
+        }
+    }
+
+    /// Briefly activates Notes, selects all, applies Checklist format (⌘⇧L), formats title, then restores previous app if not openNotes.
+    /// Requires Accessibility permission.
+    private func applyNativeChecklist(openNotes: Bool) async throws {
+        let checklistScript = """
+        -- Remember the current frontmost app
+        tell application "System Events"
+            set origApp to name of first application process whose frontmost is true
+        end tell
+
+        -- Open the note in Notes
+        tell application "Notes"
+            set activeNotes to {}
+            repeat with n in (notes whose name is "TASKS — TODAY")
+                try
+                    set c to container of n
+                    if (name of c) is not "Recently Deleted" then
+                        set end of activeNotes to n
+                    end if
+                end try
+            end repeat
+            if (count of activeNotes) > 0 then
+                activate
+                show item 1 of activeNotes
+            else
+                return
+            end if
+        end tell
+
+        delay 0.5
+
+        -- Select all and apply checklist format
+        tell application "System Events"
+            tell process "Notes"
+                repeat with attempt from 1 to 5
+                    set targetTA to missing value
+                    try
+                        set taList to (every text area of scroll area 3 of splitter group 1 of window 1)
+                        if (count of taList) > 0 then
+                            set targetTA to item 1 of taList
+                        end if
+                    end try
+                    if targetTA is missing value then
+                        try
+                            set taList to (every text area of scroll area 2 of splitter group 1 of window 1)
+                            if (count of taList) > 0 then
+                                set targetTA to item 1 of taList
+                            end if
+                        end try
+                    end if
+
+                    if targetTA is not missing value then
+                        set focused of targetTA to true
+                        delay 0.1
+                        keystroke "a" using {command down}
+                        delay 0.15
+                        keystroke "l" using {command down, shift down}
+                        delay 0.1
+                        -- Move cursor to top and format first line as Title so header is clean
+                        key code 126 using {command down}
+                        delay 0.1
+                        keystroke "t" using {command down, shift down}
+                        exit repeat
+                    else
+                        delay 0.2
+                    end if
+                end repeat
+            end tell
+        end tell
+
+        delay 0.2
+
+        -- Restore previous app if openNotes is false
+        if not \(openNotes) then
+            tell application origApp to activate
+        end if
+        """
+
+        try await executeScript(checklistScript)
     }
 
     private func executeScript(_ source: String) async throws {
