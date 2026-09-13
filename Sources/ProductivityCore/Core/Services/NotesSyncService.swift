@@ -72,9 +72,9 @@ public final class NotesSyncService {
 
         let plainText = plain.joined(separator: "\n")
 
-        // HTML version for Apple Notes: uses <div> lines so ⇧⌘L directly formats into native checklists
-        var html = "<div><b><span style=\"font-size: 20px;\">TASKS — TODAY</span></b></div><div><br></div>"
-        html += "<div><b>WORK</b></div>"
+        // HTML version for Apple Notes: uses <h1> and <h2> semantic headers so Notes displays clean headings without checklist circles
+        var html = "<div><b><h1>TASKS — TODAY</h1></b></div><div><br></div>"
+        html += "<div><h2>WORK</h2></div>"
         if workTasks.isEmpty {
             html += "<div><i><font color=\"#8E8E93\">No active tasks</font></i></div>"
         } else {
@@ -87,7 +87,7 @@ public final class NotesSyncService {
             }
         }
         html += "<div><br></div>"
-        html += "<div><b>PERSONAL</b></div>"
+        html += "<div><h2>PERSONAL</h2></div>"
         if personalTasks.isEmpty {
             html += "<div><i><font color=\"#8E8E93\">No active tasks</font></i></div>"
         } else {
@@ -107,8 +107,8 @@ public final class NotesSyncService {
     public func autoSync(context: ModelContext) {
         autoSyncTask?.cancel()
         autoSyncTask = Task { @MainActor in
-            // 15 seconds debounce: Calm background sync without thrashing or interrupting user flow
-            try? await Task.sleep(nanoseconds: 15_000_000_000)
+            // 3 seconds debounce: Responsive background sync without thrashing or lag
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
             guard !Task.isCancelled else { return }
             guard self.needsPushToNotes(context: context) else { return }
             do {
@@ -232,8 +232,8 @@ public final class NotesSyncService {
 
             if let task = matching {
                 // ProductivityApp is the primary Proof DB:
-                // Protect tasks modified locally in the app within the last 15 seconds from being overwritten
-                let isRecentlyModifiedLocally = Date().timeIntervalSince(task.updatedAt) < 15.0
+                // Protect tasks modified locally in the app within the last 3 seconds from being overwritten
+                let isRecentlyModifiedLocally = Date().timeIntervalSince(task.updatedAt) < 3.0
                 if !isRecentlyModifiedLocally {
                     if item.isCompleted && task.status != .completed {
                         task.status = .completed
@@ -460,12 +460,39 @@ public final class NotesSyncService {
         }
 
         let content = buildNotesContent(from: context)
-        try await syncDirectlyToNotes(htmlBody: content.htmlBody, openNotes: openNotes)
+
+        // Collect task titles per workspace and completed titles
+        let taskDescriptor = FetchDescriptor<TaskItem>(
+            sortBy: [SortDescriptor(\.sortOrder)]
+        )
+        let allTasks = (try? context.fetch(taskDescriptor)) ?? []
+        
+        let workTasks = allTasks.filter { $0.workspace == .work && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
+        let personalTasks = allTasks.filter { $0.workspace == .personal && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
+
+        var completedTitles: [String] = []
+        for task in (workTasks + personalTasks) where task.status == .completed {
+            completedTitles.append(task.title)
+        }
+
+        try await syncDirectlyToNotes(
+            htmlBody: content.htmlBody,
+            workTaskTitles: workTasks.map(\.title),
+            personalTaskTitles: personalTasks.map(\.title),
+            completedTitles: completedTitles,
+            openNotes: openNotes
+        )
         self.lastSyncTime = Date()
     }
 
     /// Pure backend AppleScript sync: updates Apple Notes atomically, then applies native checklist format via System Events.
-    private func syncDirectlyToNotes(htmlBody: String, openNotes: Bool = false) async throws {
+    private func syncDirectlyToNotes(
+        htmlBody: String,
+        workTaskTitles: [String] = [],
+        personalTaskTitles: [String] = [],
+        completedTitles: [String] = [],
+        openNotes: Bool = false
+    ) async throws {
         let escapeAppleScript: (String) -> String = { str in
             str.replacingOccurrences(of: "\\", with: "\\\\")
                .replacingOccurrences(of: "\"", with: "\\\"")
@@ -509,9 +536,14 @@ public final class NotesSyncService {
 
         try await executeScript(scriptLines.joined(separator: "\n"))
 
-        // Apply native checklist format via System Events (brief stealth focus switch < 1s)
+        // Apply native checklist format via System Events & Accessibility
         do {
-            try await applyNativeChecklist(openNotes: openNotes)
+            try await applyNativeChecklist(
+                openNotes: openNotes,
+                workTaskTitles: workTaskTitles,
+                personalTaskTitles: personalTaskTitles,
+                completedTitles: completedTitles
+            )
             NSLog("✅ NotesSyncService: Native checklist format applied successfully!")
         } catch {
             NSLog("⚠️ NotesSyncService: Native checklist format error: %@", error.localizedDescription)
@@ -519,16 +551,18 @@ public final class NotesSyncService {
         }
     }
 
-    /// Briefly activates Notes, selects all, applies Checklist format (⌘⇧L), formats title, then restores previous app if not openNotes.
-    /// Requires Accessibility permission.
-    private func applyNativeChecklist(openNotes: Bool) async throws {
-        let checklistScript = """
-        -- Remember the current frontmost app
-        tell application "System Events"
-            set origApp to name of first application process whose frontmost is true
-        end tell
+    /// Briefly activates Notes, applies Checklist format ONLY to task lines (ensuring WORK and PERSONAL are strictly Headings),
+    /// marks completed tasks as checked, then restores previous app.
+    private func applyNativeChecklist(
+        openNotes: Bool,
+        workTaskTitles: [String],
+        personalTaskTitles: [String],
+        completedTitles: [String]
+    ) async throws {
+        let origApp = NSWorkspace.shared.frontmostApplication
 
-        -- Open the note in Notes
+        // 1. Activate Notes and show note
+        let showScript = """
         tell application "Notes"
             set activeNotes to {}
             repeat with n in (notes whose name is "TASKS — TODAY")
@@ -542,61 +576,137 @@ public final class NotesSyncService {
             if (count of activeNotes) > 0 then
                 activate
                 show item 1 of activeNotes
-            else
-                return
             end if
         end tell
-
-        delay 0.5
-
-        -- Select all and apply checklist format
-        tell application "System Events"
-            tell process "Notes"
-                repeat with attempt from 1 to 5
-                    set targetTA to missing value
-                    try
-                        set taList to (every text area of scroll area 3 of splitter group 1 of window 1)
-                        if (count of taList) > 0 then
-                            set targetTA to item 1 of taList
-                        end if
-                    end try
-                    if targetTA is missing value then
-                        try
-                            set taList to (every text area of scroll area 2 of splitter group 1 of window 1)
-                            if (count of taList) > 0 then
-                                set targetTA to item 1 of taList
-                            end if
-                        end try
-                    end if
-
-                    if targetTA is not missing value then
-                        set focused of targetTA to true
-                        delay 0.1
-                        keystroke "a" using {command down}
-                        delay 0.15
-                        keystroke "l" using {command down, shift down}
-                        delay 0.1
-                        -- Move cursor to top and format first line as Title so header is clean
-                        key code 126 using {command down}
-                        delay 0.1
-                        keystroke "t" using {command down, shift down}
-                        exit repeat
-                    else
-                        delay 0.2
-                    end if
-                end repeat
-            end tell
-        end tell
-
-        delay 0.2
-
-        -- Restore previous app if openNotes is false
-        if not \(openNotes) then
-            tell application origApp to activate
-        end if
         """
+        try await executeScript(showScript)
+        try await Task.sleep(nanoseconds: 350_000_000)
 
-        try await executeScript(checklistScript)
+        // 2. Find Notes AXTextArea
+        guard let notesApp = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Notes").first else {
+            return
+        }
+        let appElement = AXUIElementCreateApplication(notesApp.processIdentifier)
+
+        func findTextArea(in element: AXUIElement) -> AXUIElement? {
+            var roleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+            if let role = roleRef as? String, role == "AXTextArea" { return element }
+            var childrenRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
+            if let children = childrenRef as? [AXUIElement] {
+                for child in children {
+                    if let found = findTextArea(in: child) { return found }
+                }
+            }
+            return nil
+        }
+
+        var targetTA: AXUIElement?
+        for _ in 1...6 {
+            var windowsRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+            if let windows = windowsRef as? [AXUIElement] {
+                for w in windows {
+                    if let ta = findTextArea(in: w) { targetTA = ta; break }
+                }
+            }
+            if targetTA != nil { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        guard let ta = targetTA else {
+            NSLog("⚠️ NotesSyncService: AXTextArea not found in Notes window.")
+            return
+        }
+
+        func selectRange(loc: Int, len: Int) {
+            var cfRange = CFRange(location: loc, length: len)
+            if let axRange = AXValueCreate(.cfRange, &cfRange) {
+                AXUIElementSetAttributeValue(ta, kAXSelectedTextRangeAttribute as CFString, axRange)
+                usleep(30_000)
+            }
+        }
+
+        func getText() -> String {
+            var valRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(ta, kAXValueAttribute as CFString, &valRef)
+            return valRef as? String ?? ""
+        }
+
+        func triggerFormatMenuItem(named name: String) {
+            let script = "tell application \"System Events\" to tell process \"Notes\" to click menu item \"\(name)\" of menu \"Format\" of menu bar 1"
+            var err: NSDictionary?
+            NSAppleScript(source: script)?.executeAndReturnError(&err)
+            usleep(40_000)
+        }
+
+        // Focus text area
+        AXUIElementSetAttributeValue(ta, kAXFocusedAttribute as CFString, true as CFTypeRef)
+        usleep(50_000)
+
+        func findRangeOfLine(matching target: String, in text: String) -> (loc: Int, len: Int)? {
+            var currentLoc = 0
+            let lines = text.components(separatedBy: "\n")
+            for line in lines {
+                let nsLine = line as NSString
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                let clean = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "✓☑○◯⚪️•*-[ ] \t"))
+                if clean == target || clean.caseInsensitiveCompare(target) == .orderedSame {
+                    let offsetInLine = (line as NSString).range(of: trimmed).location
+                    return (currentLoc + offsetInLine, (trimmed as NSString).length)
+                }
+                currentLoc += nsLine.length + 1
+            }
+            return nil
+        }
+
+        // 1. Convert ONLY individual task lines to Checklist circles (NEVER the whole document!)
+        let allTaskTitles = workTaskTitles + personalTaskTitles
+        for title in allTaskTitles {
+            let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clean.isEmpty else { continue }
+            let curText = getText()
+            if let (loc, len) = findRangeOfLine(matching: clean, in: curText) {
+                selectRange(loc: loc, len: len)
+                triggerFormatMenuItem(named: "Checklist")
+            }
+        }
+
+        // 2. Format WORK and PERSONAL strictly as Headings to guarantee NO checklist circles
+        let tHeadings = getText()
+        if let (loc, len) = findRangeOfLine(matching: "WORK", in: tHeadings) {
+            selectRange(loc: loc, len: len)
+            triggerFormatMenuItem(named: "Heading")
+        }
+        let tHeadings2 = getText()
+        if let (loc, len) = findRangeOfLine(matching: "PERSONAL", in: tHeadings2) {
+            selectRange(loc: loc, len: len)
+            triggerFormatMenuItem(named: "Heading")
+        }
+        let tHeadings3 = getText()
+        if let (loc, len) = findRangeOfLine(matching: "TASKS — TODAY", in: tHeadings3) {
+            selectRange(loc: loc, len: len)
+            triggerFormatMenuItem(named: "Title")
+        }
+
+        // 3. Mark completed tasks as checked natively via AX
+        let tCompleted = getText()
+        for title in completedTitles {
+            let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clean.isEmpty else { continue }
+            if let (loc, len) = findRangeOfLine(matching: clean, in: tCompleted) {
+                selectRange(loc: loc, len: len)
+                triggerFormatMenuItem(named: "Mark as Checked")
+            }
+        }
+        selectRange(loc: 0, len: 0)
+
+        // 4. Restore previous app if openNotes is false
+        if !openNotes, let orig = origApp {
+            usleep(100_000)
+            orig.activate()
+        }
     }
 
     private func executeScript(_ source: String) async throws {

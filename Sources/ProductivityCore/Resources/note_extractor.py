@@ -4,6 +4,7 @@ import gzip
 import os
 import subprocess
 import json
+import re
 import sys
 
 def get_notes_tasks():
@@ -11,60 +12,76 @@ def get_notes_tasks():
     if not os.path.exists(db_path):
         return []
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
         cur = conn.cursor()
         cur.execute('''
             SELECT ZDATA 
             FROM ZICNOTEDATA 
             JOIN ZICCLOUDSYNCINGOBJECT n ON ZICNOTEDATA.ZNOTE = n.Z_PK 
             LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON n.ZFOLDER = f.Z_PK 
-            WHERE n.ZTITLE1 LIKE "%TASKS — TODAY%" 
+            WHERE (n.ZTITLE1 LIKE "%TASKS — TODAY%" OR n.ZTITLE1 LIKE "%TASKS - TODAY%" OR n.ZTITLE1 LIKE "%TASKS TODAY%")
               AND n.ZMARKEDFORDELETION = 0 
               AND (f.ZTITLE2 IS NULL OR f.ZTITLE2 != 'Recently Deleted')
-            ORDER BY n.ZMODIFICATIONDATE DESC 
+            ORDER BY 
+              CASE 
+                WHEN n.ZTITLE1 LIKE "%TASKS — TODAY%" THEN 1 
+                WHEN n.ZTITLE1 LIKE "%TASKS - TODAY%" THEN 2 
+                ELSE 3 
+              END ASC,
+              COALESCE(n.ZMODIFICATIONDATE, 0) DESC,
+              n.Z_PK DESC 
             LIMIT 1
         ''')
         row = cur.fetchone()
         if not row or not row[0]:
             return []
 
-        data = gzip.decompress(row[0])
-        p = subprocess.Popen(['protoc', '--decode_raw'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, _ = p.communicate(data)
+        data = gzip.decompress(row[0]) if row[0].startswith(b'\x1f\x8b') else row[0]
+        
+        # Use protoc to decode protobuf raw data
+        process = subprocess.Popen(['protoc', '--decode_raw'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, _ = process.communicate(data)
         out_str = out.decode('latin1', 'ignore')
 
-        # Extract text from protobuf field 3.2
-        text = ''
+        # Find the text payload in field 2 of Note
+        text = ""
         for line in out_str.split('\n'):
             if line.strip().startswith('2: "') and len(line) > 10:
                 text = line.split('2: "', 1)[1].rsplit('"', 1)[0]
                 break
 
         clean_text = text.encode('latin1').decode('unicode_escape', 'ignore').encode('latin1').decode('utf-8', 'ignore')
-        raw_lines = clean_text.replace('\r', '\n').replace('\u2028', '\n').split('\n')
 
-        # Check styles for native checklist items (1: 103) and checked state (subfield 5 has 2: 1)
-        import re
-        raw_blocks = re.split(r'\n    5 \{', out_str)
-        checklist_blocks = []
-        for b in raw_blocks[1:]:
-            if '1: 103' in b:
-                is_checked = bool(re.search(r'5\s*\{[^}]*2:\s*1', b))
-                checklist_blocks.append(is_checked)
+        # Check styles for native checklist items (1: 103), checked state (subfield 5 has 2: 1), and strikethrough (7: 1)
+        raw_p_blocks = out_str.split('\n    5 {')
+        para_styles = []
+        for b in raw_p_blocks[1:]:
+            m_len = re.search(r'^\s*1:\s*(\d+)', b)
+            p_len = int(m_len.group(1)) if m_len else 0
+            is_checklist = '1: 103' in b
+            m_chk = re.search(r'5\s*\{[^}]*2:\s*(\d+)', b)
+            checked = (m_chk.group(1) == '1') if m_chk else False
+            struck = bool(re.search(r'\b7:\s*1\b', b))
+            para_styles.append({'len': p_len, 'checklist': is_checklist, 'checked': checked, 'struck': struck})
 
         results = []
         current_ws = 'work'
-        chk_idx = 0
         reserved_headers = {'WORK', 'PERSONAL', 'TASKS', 'TODAY', 'NO ACTIVE TASKS'}
         seen_titles = set()
 
-        for l in raw_lines:
-            line = l.strip()
+        u16_bytes = clean_text.encode('utf-16-le')
+        char_pos = 0
+        for p in para_styles:
+            chunk_bytes = u16_bytes[char_pos * 2 : (char_pos + p['len']) * 2]
+            chunk = chunk_bytes.decode('utf-16-le', 'ignore')
+            char_pos += p['len']
+
+            line = chunk.strip('\r\n').strip()
             if not line:
                 continue
 
             # Strip all list/checklist/bullet/emoji prefixes first to inspect the true content
-            clean_title = line.lstrip('✓☑○◯⚪️•*-[ ] 	').strip()
+            clean_title = line.lstrip('✓☑○◯⚪️•*-[ ] \t').strip()
             if not clean_title:
                 continue
 
@@ -80,13 +97,6 @@ def get_notes_tasks():
             if u.startswith('NO ACTIVE'):
                 continue
 
-            block_checked = False
-            if chk_idx < len(checklist_blocks):
-                block_checked = checklist_blocks[chk_idx]
-                chk_idx += 1
-
-            is_checked = block_checked or line.startswith('✓') or line.startswith('☑') or line.startswith('[x]') or line.startswith('[X]')
-            
             if clean_title.lower().startswith('[work]'):
                 current_ws = 'work'
                 clean_title = clean_title[6:].strip()
@@ -103,10 +113,12 @@ def get_notes_tasks():
                 continue
             seen_titles.add(dedup_key)
 
+            is_completed = p['checked'] or p.get('struck', False) or line.startswith('✓') or line.startswith('☑') or line.startswith('[x]') or line.startswith('[X]')
+
             results.append({
                 'title': clean_title,
                 'workspace': current_ws,
-                'completed': is_checked
+                'completed': is_completed
             })
 
         return results
