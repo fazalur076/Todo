@@ -43,6 +43,7 @@ public final class AppState {
     public var toggleQuickCaptureHandler: (() -> Void)? = nil
     public var toggleMainPanelHandler: (() -> Void)? = nil
     public var openMainPanelHandler: (() -> Void)? = nil
+    public var panelOpenCount: Int = 0
 
     private init() {
         let alwaysWork = UserDefaults.standard.bool(forKey: "alwaysLaunchInWork")
@@ -86,6 +87,16 @@ public final class AppState {
 
         ShortcutService.shared.onToggleMainPanel = { [weak self] in
             self?.toggleMainPanelHandler?()
+        }
+
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.productivity.openSettings"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.isSettingsPresented = true
+            }
         }
     }
 

@@ -92,8 +92,14 @@ public final class MenuBarController: NSObject {
             panel.ignoredClickScreenRectProvider = { [weak self] in
                 self?.statusItemButtonScreenRect
             }
+            panel.onPanelClosed = {
+                AppState.shared.isMainPanelPresented = false
+            }
             self.mainPanel = panel
         }
+
+        AppState.shared.panelOpenCount += 1
+        AppState.shared.isMainPanelPresented = true
 
         Task { @MainActor in
             _ = try? await NotesSyncService.shared.pullFromNotes(context: PersistenceController.shared.container.mainContext)

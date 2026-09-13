@@ -48,6 +48,7 @@ public class FloatingPanel<Content: View>: NSPanel {
 
     private var clickEventMonitor: Any?
     public var ignoredClickScreenRectProvider: (() -> NSRect?)?
+    public var onPanelClosed: (() -> Void)?
 
     public override func makeKeyAndOrderFront(_ sender: Any?) {
         super.makeKeyAndOrderFront(sender)
@@ -57,11 +58,13 @@ public class FloatingPanel<Content: View>: NSPanel {
     public override func close() {
         stopMonitoringClicks()
         super.close()
+        onPanelClosed?()
     }
 
     public override func orderOut(_ sender: Any?) {
         stopMonitoringClicks()
         super.orderOut(sender)
+        onPanelClosed?()
     }
 
     private func startMonitoringClicks() {

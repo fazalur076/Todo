@@ -158,6 +158,21 @@ public struct TaskListView: View {
             // Silently pull any new or updated tasks from Apple Notes
             _ = try? await NotesSyncService.shared.pullFromNotes(context: modelContext)
         }
+        .onChange(of: appState.panelOpenCount) {
+            resetToFirstView()
+        }
+        .onChange(of: appState.isMainPanelPresented) { _, isPresented in
+            if !isPresented {
+                resetToFirstView()
+            }
+        }
+        .onChange(of: appState.isSettingsPresented) { _, isPresented in
+            if isPresented {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    showSettingsSheet = true
+                }
+            }
+        }
         .overlay {
             if showSettingsSheet {
                 ZStack {
@@ -233,11 +248,67 @@ public struct TaskListView: View {
 
     // MARK: - Header
     private var headerView: some View {
-        HStack(alignment: .center) {
-            Text("TODAY")
-                .font(.system(size: 13, weight: .bold, design: .monospaced))
-                .tracking(1.5)
-                .foregroundStyle(.primary)
+        HStack(alignment: .center, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Text("Today")
+                    .font(.system(size: 17, weight: .bold, design: .default))
+                    .tracking(-0.35)
+                    .foregroundStyle(.primary)
+
+                Text(Date().formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))
+                    .font(.system(size: 12, weight: .medium, design: .default))
+                    .foregroundStyle(.secondary.opacity(0.8))
+            }
+
+            // Interactive Workspace switcher badge
+            Menu {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        appState.currentWorkspace = .work
+                    }
+                } label: {
+                    HStack {
+                        Text("Work")
+                        if appState.currentWorkspace == .work {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        appState.currentWorkspace = .personal
+                    }
+                } label: {
+                    HStack {
+                        Text("Personal")
+                        if appState.currentWorkspace == .personal {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(appState.currentWorkspace == .work ? Color.blue : Color.purple)
+                        .frame(width: 6, height: 6)
+                    Text(appState.currentWorkspace.displayName)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.primary.opacity(0.06))
+                .clipShape(Capsule())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .buttonStyle(.plain)
+            .focusEffectDisabled()
+            .help("Switch Workspace (⌥⌘W / ⌥⌘P)")
 
             Spacer()
 
@@ -565,7 +636,9 @@ public struct TaskListView: View {
 
             // Settings button
             Button {
-                showSettingsSheet = true
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    showSettingsSheet = true
+                }
             } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 13))
@@ -576,8 +649,9 @@ public struct TaskListView: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .keyboardShortcut(",", modifiers: .command)
             .focusEffectDisabled()
-            .help("Preferences")
+            .help("Preferences (⌘,)")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -644,5 +718,16 @@ public struct TaskListView: View {
         }
         try? modelContext.save()
         NotesSyncService.shared.autoSync(context: modelContext)
+    }
+
+    private func resetToFirstView() {
+        showSettingsSheet = false
+        showFocusSheet = false
+        showEODSheet = false
+        showMoveUnfinishedConfirmation = false
+        showAccessibilityInfoSheet = false
+        taskToEdit = nil
+        selectedTaskId = nil
+        appState.isSettingsPresented = false
     }
 }
