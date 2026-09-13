@@ -185,14 +185,38 @@ public final class NotesSyncService {
         let allTasksDescriptor = FetchDescriptor<TaskItem>()
         let existingTasks = (try? context.fetch(allTasksDescriptor)) ?? []
 
-        // Purge any corrupted header tasks that might have previously slipped into the DB
+        let notesKeys = Set(parsedItems.map { "\($0.workspace.rawValue)::\($0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())" })
+        let reservedHeaders: Set<String> = ["WORK", "PERSONAL", "TASKS — TODAY", "TASKS - TODAY", "NO ACTIVE TASKS", "TASKS"]
+
+        // 1. Purge corrupted tasks and synchronize deletions from Apple Notes
         var purgedAny = false
+        var validExistingTasks: [TaskItem] = []
         for task in existingTasks {
-            let clean = task.title.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-            if clean == "TASKS — TODAY" || clean == "WORK" || clean == "PERSONAL" || clean == "NO ACTIVE TASKS" || clean.contains("TASKS — TODAY") {
+            let clean = task.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let upper = clean.uppercased()
+
+            // Delete headers or multiline corruption immediately
+            if reservedHeaders.contains(upper) || upper.contains("TASKS — TODAY") || upper.contains("TASKS - TODAY") || clean.contains("\n") || clean.contains("\r") {
                 context.delete(task)
                 purgedAny = true
+                continue
             }
+
+            let key = "\(task.workspace.rawValue)::\(clean.lowercased())"
+            let isTodayScope = task.isScheduledForToday || task.status == .inProgress || task.isOverdue || (task.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)
+
+            // If a task in today's scope is no longer in Apple Notes, and wasn't just created/edited locally, remove it
+            if isTodayScope && !notesKeys.contains(key) {
+                let isRecentlyCreatedLocally = Date().timeIntervalSince(task.createdAt) < 10.0
+                let isRecentlyModifiedLocally = Date().timeIntervalSince(task.updatedAt) < 10.0
+                if !isRecentlyCreatedLocally && !isRecentlyModifiedLocally {
+                    context.delete(task)
+                    purgedAny = true
+                    continue
+                }
+            }
+
+            validExistingTasks.append(task)
         }
         if purgedAny {
             try? context.save()
@@ -200,7 +224,7 @@ public final class NotesSyncService {
 
         if parsedItems.isEmpty {
             // If the note was deleted and not found in Notes, recreate it from the app!
-            if !existingTasks.isEmpty {
+            if !validExistingTasks.isEmpty {
                 let shouldRecreate = lastRecreationAttempt == nil || Date().timeIntervalSince(lastRecreationAttempt!) > 5
                 if shouldRecreate && !noteExistsInNotes() {
                     lastRecreationAttempt = Date()
@@ -212,11 +236,10 @@ public final class NotesSyncService {
 
         var addedCount = 0
         var updatedCount = 0
-        var seenTitles = Set(existingTasks.map { "\($0.workspace.rawValue)::\($0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())" })
-        let reservedHeaders: Set<String> = ["WORK", "PERSONAL", "TASKS — TODAY", "TASKS - TODAY", "NO ACTIVE TASKS", "TASKS"]
+        var seenTitles = Set(validExistingTasks.map { "\($0.workspace.rawValue)::\($0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())" })
 
         for item in parsedItems {
-            let cleanTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanTitle = item.title.components(separatedBy: .newlines).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanTitle.isEmpty else { continue }
             let upper = cleanTitle.uppercased()
             if reservedHeaders.contains(upper) || upper.contains("TASKS — TODAY") || upper.contains("TASKS - TODAY") {
@@ -225,7 +248,7 @@ public final class NotesSyncService {
 
             let key = "\(item.workspace.rawValue)::\(cleanTitle.lowercased())"
 
-            let matching = existingTasks.first {
+            let matching = validExistingTasks.first {
                 $0.workspace == item.workspace &&
                 $0.title.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(cleanTitle) == .orderedSame
             }
@@ -248,7 +271,7 @@ public final class NotesSyncService {
             } else if !seenTitles.contains(key) {
                 // New task discovered in Notes: insert once, avoiding double/triple entry
                 seenTitles.insert(key)
-                let nextOrder = (existingTasks.filter { $0.workspace == item.workspace }.map(\.sortOrder).max() ?? 0) + addedCount
+                let nextOrder = (validExistingTasks.filter { $0.workspace == item.workspace }.map(\.sortOrder).max() ?? 0) + addedCount
                 let newTask = TaskItem(
                     title: cleanTitle,
                     workspace: item.workspace,
@@ -256,6 +279,7 @@ public final class NotesSyncService {
                     sortOrder: nextOrder + 1
                 )
                 context.insert(newTask)
+                validExistingTasks.append(newTask)
                 addedCount += 1
             }
         }

@@ -52,9 +52,10 @@ def get_notes_tasks():
 
         clean_text = text.encode('latin1').decode('unicode_escape', 'ignore').encode('latin1').decode('utf-8', 'ignore')
 
-        # Check styles for native checklist items (1: 103), checked state (subfield 5 has 2: 1), and strikethrough (7: 1)
+        # Extract attribute runs with character offsets
         raw_p_blocks = out_str.split('\n    5 {')
-        para_styles = []
+        runs = []
+        curr_offset = 0
         for b in raw_p_blocks[1:]:
             m_len = re.search(r'^\s*1:\s*(\d+)', b)
             p_len = int(m_len.group(1)) if m_len else 0
@@ -62,26 +63,36 @@ def get_notes_tasks():
             m_chk = re.search(r'5\s*\{[^}]*2:\s*(\d+)', b)
             checked = (m_chk.group(1) == '1') if m_chk else False
             struck = bool(re.search(r'\b7:\s*1\b', b))
-            para_styles.append({'len': p_len, 'checklist': is_checklist, 'checked': checked, 'struck': struck})
+            runs.append({
+                'start': curr_offset,
+                'end': curr_offset + p_len,
+                'len': p_len,
+                'checklist': is_checklist,
+                'checked': checked,
+                'struck': struck
+            })
+            curr_offset += p_len
+
+        # Split clean_text by real newlines (never slice words by protobuf attribute runs!)
+        lines_with_pos = []
+        pos = 0
+        for raw_l in clean_text.replace('\r', '\n').replace('\u2028', '\n').split('\n'):
+            line_len = len(raw_l)
+            lines_with_pos.append((raw_l, pos, pos + line_len))
+            pos += line_len + 1  # +1 for newline
 
         results = []
         current_ws = 'work'
         reserved_headers = {'WORK', 'PERSONAL', 'TASKS', 'TODAY', 'NO ACTIVE TASKS'}
         seen_titles = set()
 
-        u16_bytes = clean_text.encode('utf-16-le')
-        char_pos = 0
-        for p in para_styles:
-            chunk_bytes = u16_bytes[char_pos * 2 : (char_pos + p['len']) * 2]
-            chunk = chunk_bytes.decode('utf-16-le', 'ignore')
-            char_pos += p['len']
-
-            line = chunk.strip('\r\n').strip()
-            if not line:
+        for line, start, end in lines_with_pos:
+            clean = line.strip()
+            if not clean:
                 continue
 
             # Strip all list/checklist/bullet/emoji prefixes first to inspect the true content
-            clean_title = line.lstrip('✓☑○◯⚪️•*-[ ] \t').strip()
+            clean_title = clean.lstrip('✓☑○◯⚪️•*-[ ] \t').strip()
             if not clean_title:
                 continue
 
@@ -113,7 +124,17 @@ def get_notes_tasks():
                 continue
             seen_titles.add(dedup_key)
 
-            is_completed = p['checked'] or p.get('struck', False) or line.startswith('✓') or line.startswith('☑') or line.startswith('[x]') or line.startswith('[X]')
+            # Check overlapping attribute runs for this line
+            line_is_checked = False
+            line_is_struck = False
+            for r in runs:
+                if max(start, r['start']) < min(end, r['end']):
+                    if r['checked']:
+                        line_is_checked = True
+                    if r['struck']:
+                        line_is_struck = True
+
+            is_completed = line_is_checked or line_is_struck or clean.startswith('✓') or clean.startswith('☑') or clean.startswith('[x]') or clean.startswith('[X]')
 
             results.append({
                 'title': clean_title,
