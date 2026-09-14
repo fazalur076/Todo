@@ -4,13 +4,14 @@ import ProductivityCore
 
 public struct TaskListView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query private var allTasks: [TaskItem]
+    @Query(sort: \TaskItem.sortOrder) private var allTasks: [TaskItem]
 
     var appState = AppState.shared
     var focusService = FocusService.shared
     var onClose: (() -> Void)?
 
     @State private var selectedTaskId: UUID?
+    @State private var draggingTaskId: UUID? = nil
     @State private var taskToEdit: TaskItem?
     @State private var newTaskTitle: String = ""
     @State private var filterStatus: TaskStatus? = nil
@@ -30,9 +31,11 @@ public struct TaskListView: View {
         self.onClose = onClose
     }
 
-    // Strictly isolated to current workspace only
+    // Strictly isolated to current workspace only and sorted by sortOrder
     private var workspaceTasks: [TaskItem] {
-        allTasks.filter { $0.workspace == appState.currentWorkspace }
+        allTasks
+            .filter { $0.workspace == appState.currentWorkspace }
+            .sorted { $0.sortOrder < $1.sortOrder }
     }
 
     private var pendingTasks: [TaskItem] {
@@ -453,42 +456,60 @@ public struct TaskListView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.vertical, 48)
             } else {
-                List {
-                    ForEach(displayedTasks) { task in
-                        TaskRowView(
-                            task: task,
-                            isSelected: selectedTaskId == task.id,
-                            onSelect: { selectedTaskId = task.id },
-                            onEdit: { taskToEdit = task },
-                            onStartFocus: {
-                                focusService.startFocus(for: task)
-                                showFocusSheet = true
-                            },
-                            onDelete: {
-                                modelContext.delete(task)
-                                try? modelContext.save()
-                                NotesSyncService.shared.autoSync(context: modelContext)
-                            },
-                            onMoveUp: { moveTaskUp(task) },
-                            onMoveDown: { moveTaskDown(task) }
-                        )
-                        .listRowInsets(EdgeInsets(top: 2, leading: 6, bottom: 2, trailing: 6))
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(displayedTasks) { task in
+                            TaskRowView(
+                                task: task,
+                                isSelected: selectedTaskId == task.id,
+                                onSelect: { selectedTaskId = task.id },
+                                onEdit: { taskToEdit = task },
+                                onStartFocus: {
+                                    focusService.startFocus(for: task)
+                                    showFocusSheet = true
+                                },
+                                onDelete: {
+                                    modelContext.delete(task)
+                                    try? modelContext.save()
+                                    NotesSyncService.shared.autoSync(context: modelContext)
+                                },
+                                onMoveUp: { moveTaskUp(task) },
+                                onMoveDown: { moveTaskDown(task) }
+                            )
+                            .opacity(draggingTaskId == task.id ? 0.35 : 1.0)
+                            .onDrag {
+                                self.draggingTaskId = task.id
+                                return NSItemProvider(object: task.id.uuidString as NSString)
+                            }
+                            .onDrop(of: [.text], delegate: TaskDropDelegate(
+                                destinationTask: task,
+                                displayedTasks: displayedTasks,
+                                draggingTaskId: $draggingTaskId,
+                                onMove: { src, dst in
+                                    reorderTask(source: src, destination: dst)
+                                }
+                            ))
+                        }
                     }
-                    .onMove(perform: reorderTasks)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
+                .scrollIndicators(.automatic)
             }
         }
     }
 
     // MARK: - Task Re-ordering Logic
-    private func reorderTasks(from source: IndexSet, to destination: Int) {
-        var mutableTasks = displayedTasks
-        mutableTasks.move(fromOffsets: source, toOffset: destination)
-        for (index, task) in mutableTasks.enumerated() {
+    private func reorderTask(source: TaskItem, destination: TaskItem) {
+        guard let fromIndex = displayedTasks.firstIndex(where: { $0.id == source.id }),
+              let toIndex = displayedTasks.firstIndex(where: { $0.id == destination.id }),
+              fromIndex != toIndex else { return }
+
+        var mutable = displayedTasks
+        let moved = mutable.remove(at: fromIndex)
+        mutable.insert(moved, at: toIndex)
+
+        for (index, task) in mutable.enumerated() {
             task.sortOrder = index
         }
         try? modelContext.save()
@@ -706,5 +727,32 @@ public struct TaskListView: View {
         taskToEdit = nil
         selectedTaskId = nil
         appState.isSettingsPresented = false
+    }
+}
+
+// MARK: - Task Drop Delegate for Real-Time Drag-and-Drop Reordering
+struct TaskDropDelegate: DropDelegate {
+    let destinationTask: TaskItem
+    let displayedTasks: [TaskItem]
+    @Binding var draggingTaskId: UUID?
+    let onMove: (TaskItem, TaskItem) -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let draggingId = draggingTaskId,
+              draggingId != destinationTask.id,
+              let sourceTask = displayedTasks.first(where: { $0.id == draggingId }) else { return }
+
+        withAnimation(.easeInOut(duration: 0.18)) {
+            onMove(sourceTask, destinationTask)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggingTaskId = nil
+        return true
     }
 }

@@ -45,10 +45,12 @@ public struct TaskRowView: View {
                 .opacity(isHovered ? 0.9 : 0.4)
                 .frame(width: 12)
 
-            // Checkbox button on left: Directly toggles between Completed and Pending
+            // Checkbox button on left: 1 time goes pending, 2 times goes completed, again 1 time goes back to unchecked mark
             Button {
                 withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
-                    toggleCheckboxDirectly()
+                    task.cycleStatus()
+                    try? modelContext.save()
+                    NotesSyncService.shared.autoSync(context: modelContext)
                 }
             } label: {
                 Image(systemName: task.status == .completed ? "checkmark.circle.fill" : (task.status == .inProgress ? "circle.dotted" : "circle"))
@@ -58,7 +60,7 @@ public struct TaskRowView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(task.status == .completed ? "Mark as pending" : "Mark as completed")
+            .help(task.status == .completed ? "Mark as unchecked" : (task.status == .inProgress ? "Mark as completed" : "Mark as in progress"))
 
             // Title and notes excerpt
             VStack(alignment: .leading, spacing: 3) {
@@ -190,28 +192,21 @@ public struct TaskRowView: View {
                 .fill(isSelected ? Color.accentColor.opacity(0.15) : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
         )
         .contentShape(Rectangle())
-        // Double-click on row/pill: Transition directly to Completed
+        // Double-click on row: Transition directly to Completed (or back to unchecked if already completed)
         .onTapGesture(count: 2) {
             withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
-                task.status = .completed
-                try? modelContext.save()
-                NotesSyncService.shared.autoSync(context: modelContext)
-            }
-        }
-        // Single-click on row/pill: Advance Pending to In Progress (or toggle back to Pending)
-        .onTapGesture(count: 1) {
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
-                onSelect()
-                if task.status == .pending {
-                    task.status = .inProgress
-                } else if task.status == .inProgress {
+                if task.status == .completed {
                     task.status = .pending
-                } else if task.status == .completed {
-                    task.status = .pending
+                } else {
+                    task.status = .completed
                 }
                 try? modelContext.save()
                 NotesSyncService.shared.autoSync(context: modelContext)
             }
+        }
+        // Single-click on row: Select row
+        .onTapGesture(count: 1) {
+            onSelect()
         }
         .onHover { hovering in
             isHovered = hovering
@@ -315,13 +310,9 @@ public struct TaskRowView: View {
         }
     }
 
-    /// When user clicks the checkbox icon on the left, it directly toggles Completed
+    /// When user clicks the checkbox icon on the left, it cycles status
     private func toggleCheckboxDirectly() {
-        if task.status == .completed {
-            task.status = .pending
-        } else {
-            task.status = .completed
-        }
+        task.cycleStatus()
         try? modelContext.save()
         NotesSyncService.shared.autoSync(context: modelContext)
     }

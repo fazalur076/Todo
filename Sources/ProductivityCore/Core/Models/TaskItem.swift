@@ -62,6 +62,18 @@ public final class TaskItem {
         }
     }
 
+    /// Cycles task status: pending -> inProgress -> completed -> pending
+    public func cycleStatus() {
+        switch status {
+        case .pending:
+            status = .inProgress
+        case .inProgress:
+            status = .completed
+        case .completed:
+            status = .pending
+        }
+    }
+
     public init(
         id: UUID = UUID(),
         title: String,

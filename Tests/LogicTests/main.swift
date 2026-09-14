@@ -142,46 +142,42 @@ func runAllChecks() {
     assert(parsedItems[3].title == "Call parents" && parsedItems[3].workspace == .personal && !parsedItems[3].isCompleted)
     print("✅ Check 4 Passed: Apple Notes Two-Way parsing verified (HTML lists, strikes, and symbols).")
 
-    // Test 6: Direct Checkbox toggle vs Row Pill click transitions
+    // Test 6: Checkbox status cycling (1 time -> pending/inProgress, 2 times -> completed, again 1 time -> unchecked)
     let testTask = TaskItem(title: "Click test", workspace: .work, status: .pending)
-    // Direct Checkbox click: Directly marks as Completed!
-    if testTask.status == .completed {
-        testTask.status = .pending
-    } else {
-        testTask.status = .completed
-    }
-    assert(testTask.status == .completed, "Direct checkbox click must mark task as completed directly!")
+    assert(testTask.status == .pending, "Initial status must be pending (unchecked mark)")
 
-    // Direct Checkbox click again: Unchecks back to pending
-    if testTask.status == .completed {
-        testTask.status = .pending
-    } else {
-        testTask.status = .completed
-    }
-    assert(testTask.status == .pending, "Direct checkbox click on completed must toggle back to pending!")
+    // 1 time: goes pending / in-progress
+    testTask.cycleStatus()
+    assert(testTask.status == .inProgress, "1 time click must transition to inProgress (pending action)!")
 
-    // Row Pill Single-click on pending -> inProgress
-    if testTask.status == .pending {
-        testTask.status = .inProgress
-    }
-    assert(testTask.status == .inProgress, "Row pill single click must transition pending to inProgress")
+    // 2 times: goes completed
+    testTask.cycleStatus()
+    assert(testTask.status == .completed, "2 times click must transition to completed!")
 
-    // Row Pill Double-click -> completed
+    // Again 1 time: goes back to unchecked mark without hassle
+    testTask.cycleStatus()
+    assert(testTask.status == .pending, "Again 1 time click must return to unchecked mark without hassle!")
+
+    // Double-click shortcut from pending directly to completed
     testTask.status = .completed
-    assert(testTask.status == .completed, "Row pill double click must transition directly to completed")
+    assert(testTask.status == .completed, "Double click must transition directly to completed")
+    testTask.cycleStatus()
+    assert(testTask.status == .pending, "Single click from completed returns directly to unchecked")
 
-    print("✅ Check 5 Passed: Direct checkbox toggle & row pill click transitions verified.")
+    print("✅ Check 5 Passed: 1-click pending -> 2-click completed -> 1-click unchecked mark cycle verified.")
 
-    // Test 7: Task Re-ordering
+    // Test 7: Task Re-ordering (Drag to go UP)
     var taskList = [workTask1, workTask2]
-    taskList.move(fromOffsets: IndexSet(integer: 1), toOffset: 0)
+    // Simulate dragging workTask2 (bottom) UP above workTask1 (top)
+    let movedItem = taskList.remove(at: 1)
+    taskList.insert(movedItem, at: 0)
     for (i, t) in taskList.enumerated() {
         t.sortOrder = i
     }
-    assert(taskList[0].id == workTask2.id, "workTask2 should now be at index 0")
+    assert(taskList[0].id == workTask2.id, "workTask2 should now be at index 0 after drag to go up")
     assert(workTask2.sortOrder == 0, "workTask2 sortOrder should be 0")
     assert(workTask1.sortOrder == 1, "workTask1 sortOrder should be 1")
-    print("✅ Check 6 Passed: Task reordering logic verified.")
+    print("✅ Check 6 Passed: Drag to go up task reordering verified.")
 
     // Test 8: Dynamic Divisions CRUD and EOD inclusion/exclusion
     let appState = AppState.shared
