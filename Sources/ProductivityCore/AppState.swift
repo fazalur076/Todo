@@ -48,8 +48,13 @@ public final class AppState {
         didSet { UserDefaults.standard.set(syncNotesEnabled, forKey: "syncNotesEnabled") }
     }
 
+    public var onAppearanceChange: ((String) -> Void)? = nil
+
     public var appearanceMode: String {
-        didSet { UserDefaults.standard.set(appearanceMode, forKey: "appearanceMode") }
+        didSet {
+            UserDefaults.standard.set(appearanceMode, forKey: "appearanceMode")
+            onAppearanceChange?(appearanceMode)
+        }
     }
 
     public var launchAtLogin: Bool {

@@ -50,6 +50,12 @@ public final class MenuBarController: NSObject {
             self?.openMainPanel()
         }
 
+        // Appearance change observer
+        AppState.shared.onAppearanceChange = { [weak self] mode in
+            self?.updateAppAppearance(mode)
+        }
+        updateAppAppearance(AppState.shared.appearanceMode)
+
         // Auto-close when swiping 4 fingers to switch desktops / spaces
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification,
@@ -82,7 +88,6 @@ public final class MenuBarController: NSObject {
                 self?.closeMainPanel()
             })
             .modelContainer(PersistenceController.shared.container)
-            .preferredColorScheme(colorSchemeForMode(AppState.shared.appearanceMode))
 
             let panel = FloatingPanel(
                 contentRect: NSRect(x: 0, y: 0, width: 480, height: 580),
@@ -95,6 +100,7 @@ public final class MenuBarController: NSObject {
             panel.onPanelClosed = {
                 AppState.shared.isMainPanelPresented = false
             }
+            panel.updateAppearance(currentNSAppearance)
             self.mainPanel = panel
         }
 
@@ -141,13 +147,13 @@ public final class MenuBarController: NSObject {
                 self?.hideQuickCapture()
             }
             .modelContainer(PersistenceController.shared.container)
-            .preferredColorScheme(colorSchemeForMode(AppState.shared.appearanceMode))
 
             let panel = FloatingPanel(
                 contentRect: NSRect(x: 0, y: 0, width: 480, height: 160),
                 isMovable: true,
                 rootView: AnyView(captureView)
             )
+            panel.updateAppearance(currentNSAppearance)
             self.quickCapturePanel = panel
         }
 
@@ -262,6 +268,30 @@ public final class MenuBarController: NSObject {
             button.image = NSImage(systemSymbolName: "checklist", accessibilityDescription: "To Do")
             button.title = ""
         }
+    }
+
+    public var currentNSAppearance: NSAppearance? {
+        switch AppState.shared.appearanceMode {
+        case "light": return NSAppearance(named: .aqua)
+        case "dark": return NSAppearance(named: .darkAqua)
+        default: return nil
+        }
+    }
+
+    public func updateAppAppearance(_ mode: String) {
+        let appearance: NSAppearance?
+        switch mode {
+        case "light":
+            appearance = NSAppearance(named: .aqua)
+        case "dark":
+            appearance = NSAppearance(named: .darkAqua)
+        default:
+            appearance = nil
+        }
+
+        NSApp.appearance = appearance
+        mainPanel?.updateAppearance(appearance)
+        quickCapturePanel?.updateAppearance(appearance)
     }
 
     private func colorSchemeForMode(_ mode: String) -> ColorScheme? {

@@ -27,7 +27,7 @@ public class FloatingPanel<Content: View>: NSPanel {
         let visualEffect = NSVisualEffectView()
         visualEffect.blendingMode = .behindWindow
         visualEffect.state = .active
-        visualEffect.material = .hudWindow
+        visualEffect.material = .popover
         visualEffect.wantsLayer = true
         visualEffect.layer?.cornerRadius = 16
         visualEffect.layer?.masksToBounds = true
@@ -44,6 +44,14 @@ public class FloatingPanel<Content: View>: NSPanel {
         ])
 
         self.contentView = visualEffect
+        self.updateAppearance(NSApp.appearance)
+    }
+
+    public func updateAppearance(_ appearance: NSAppearance?) {
+        self.appearance = appearance
+        if let effect = self.contentView as? NSVisualEffectView {
+            effect.appearance = appearance
+        }
     }
 
     private var clickEventMonitor: Any?

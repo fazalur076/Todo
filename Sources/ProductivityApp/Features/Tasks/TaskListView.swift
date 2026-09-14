@@ -14,6 +14,8 @@ public struct TaskListView: View {
     @State private var draggingTaskId: UUID? = nil
     @State private var taskToEdit: TaskItem?
     @State private var newTaskTitle: String = ""
+    @State private var newTaskNotes: String = ""
+    @State private var isInlineNotesExpanded: Bool = false
     @State private var filterStatus: TaskStatus? = nil
     @State private var isAddingInline: Bool = false
     @FocusState private var isInlineAddFocused: Bool
@@ -164,6 +166,7 @@ public struct TaskListView: View {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(Color.primary.opacity(0.12), lineWidth: 1)
         )
+        .preferredColorScheme(appState.appearanceMode == "light" ? .light : (appState.appearanceMode == "dark" ? .dark : nil))
         .task {
             // Silently pull any new or updated tasks from Apple Notes
             _ = try? await NotesSyncService.shared.pullFromNotes(context: modelContext)
@@ -369,33 +372,62 @@ public struct TaskListView: View {
 
     // MARK: - Inline Add
     private var inlineAddView: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "plus.circle")
-                .font(.system(size: 15))
-                .foregroundStyle(.secondary)
+        VStack(spacing: 6) {
+            HStack(spacing: 10) {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
 
-            TextField("Add a task...", text: $newTaskTitle)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .focused($isInlineAddFocused)
-                .onSubmit {
-                    submitInlineTask()
-                }
+                TextField("Add a task...", text: $newTaskTitle)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .focused($isInlineAddFocused)
+                    .onSubmit {
+                        submitInlineTask()
+                    }
 
-            if !newTaskTitle.isEmpty {
+                // Add / Hide notes toggle button
                 Button {
-                    submitInlineTask()
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isInlineNotesExpanded.toggle()
+                    }
                 } label: {
-                    Text("Add")
-                        .font(.system(size: 11, weight: .semibold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.accentColor)
-                        .foregroundStyle(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    Image(systemName: isInlineNotesExpanded ? "note.text.badge.plus" : "note.text")
+                        .font(.system(size: 13))
+                        .foregroundStyle(isInlineNotesExpanded || !newTaskNotes.isEmpty ? Color.accentColor : .secondary)
                 }
                 .buttonStyle(.plain)
                 .focusEffectDisabled()
+                .help(isInlineNotesExpanded ? "Hide Description" : "Add Description / Notes")
+
+                if !newTaskTitle.isEmpty {
+                    Button {
+                        submitInlineTask()
+                    } label: {
+                        Text("Add")
+                            .font(.system(size: 11, weight: .semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.accentColor)
+                            .foregroundStyle(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
+                    .buttonStyle(.plain)
+                    .focusEffectDisabled()
+                }
+            }
+
+            if isInlineNotesExpanded {
+                TextField("Add details or description (optional)...", text: $newTaskNotes, axis: .vertical)
+                    .lineLimit(2...4)
+                    .font(.system(size: 12))
+                    .textFieldStyle(.plain)
+                    .padding(.leading, 25)
+                    .padding(.trailing, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.primary.opacity(0.03))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(.horizontal, 14)
@@ -692,9 +724,11 @@ public struct TaskListView: View {
         let trimmed = newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        let trimmedNotes = newTaskNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         let nextOrder = (displayedTasks.map(\.sortOrder).max() ?? 0) + 1
         let task = TaskItem(
             title: trimmed,
+            notes: trimmedNotes.isEmpty ? nil : trimmedNotes,
             workspace: appState.currentWorkspace,
             status: .pending,
             scheduledDate: Calendar.current.startOfDay(for: Date()),
@@ -704,6 +738,8 @@ public struct TaskListView: View {
         try? modelContext.save()
         NotesSyncService.shared.autoSync(context: modelContext)
         newTaskTitle = ""
+        newTaskNotes = ""
+        isInlineNotesExpanded = false
     }
 
     private func moveUnfinishedToTomorrow() {

@@ -60,7 +60,7 @@ public final class NotesSyncService {
         return false
     }
 
-    /// Safely deletes a task from SwiftData, records a tombstone, and immediately updates Apple Notes.
+    /// Safely deletes a task from SwiftData, records a tombstone, and schedules a Notes sync after idle.
     public func deleteTask(_ task: TaskItem, context: ModelContext) {
         let title = task.title
         let workspace = task.workspace
@@ -68,25 +68,18 @@ public final class NotesSyncService {
         context.delete(task)
         try? context.save()
 
-        // Cancel pending debounce and push immediately so Apple Notes reflects deletion instantly
-        autoSyncTask?.cancel()
-        Task { @MainActor in
-            try? await self.syncToNotes(from: context, openNotes: false)
-        }
+        // Schedule sync after 15s idle (tombstones prevent pull resurrection during the window)
+        autoSync(context: context)
     }
 
-    /// Moves a task to a different division, updates mutation timestamps, and pushes to Apple Notes immediately
+    /// Moves a task to a different division, updates mutation timestamps, and schedules a Notes sync after idle.
     public func moveTask(_ task: TaskItem, to newWorkspace: Workspace, context: ModelContext) {
         task.workspace = newWorkspace
         task.updatedAt = Date()
-        Self.lastLocalMutationTime = Date()
         try? context.save()
 
-        // Cancel pending debounce and push immediately so Apple Notes reflects the division move instantly
-        autoSyncTask?.cancel()
-        Task { @MainActor in
-            try? await self.syncToNotes(from: context, openNotes: false)
-        }
+        // Schedule sync after 15s idle (includes native checklist formatting)
+        autoSync(context: context)
     }
 
     private init() {
@@ -146,11 +139,9 @@ public final class NotesSyncService {
                     let mark = task.status == .completed ? "✓" : (task.status == .inProgress ? "◐" : "○")
                     plain.append("\(mark) \(task.title)")
                     if task.status == .completed {
-                        html += "<div><font color=\"#34C759\"><b>✓</b></font>&nbsp;&nbsp;<strike><font color=\"#8E8E93\">\(escapeHtml(task.title))</font></strike></div>"
-                    } else if task.status == .inProgress {
-                        html += "<div><font color=\"#007AFF\"><b>◐</b></font>&nbsp;&nbsp;<b>\(escapeHtml(task.title))</b></div>"
+                        html += "<div><strike><font color=\"#8E8E93\">\(escapeHtml(task.title))</font></strike></div>"
                     } else {
-                        html += "<div><font color=\"#8E8E93\"><b>○</b></font>&nbsp;&nbsp;\(escapeHtml(task.title))</div>"
+                        html += "<div>\(escapeHtml(task.title))</div>"
                     }
                 }
             }
@@ -163,17 +154,18 @@ public final class NotesSyncService {
         return (noteTitle, plainText, html)
     }
 
-    /// Pushes changes made in the app to Apple Notes after a background debounce window
+    /// Pushes changes made in the app to Apple Notes after 15 seconds of user inactivity.
+    /// Each new call resets the timer. Native checklist formatting is applied in this path.
     public func autoSync(context: ModelContext) {
         autoSyncTask?.cancel()
         Self.lastLocalMutationTime = Date()
         autoSyncTask = Task { @MainActor in
-            // 2 seconds debounce: Responsive background sync without thrashing or lag
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            // 15 seconds debounce: Only push to Notes after user stops interacting
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
             guard !Task.isCancelled else { return }
             guard self.needsPushToNotes(context: context) else { return }
             do {
-                try await self.syncToNotes(from: context, openNotes: false)
+                try await self.syncToNotes(from: context, openNotes: false, applyChecklist: true)
             } catch {
                 print("Auto-sync to Notes error: \(error)")
             }
@@ -618,7 +610,7 @@ public final class NotesSyncService {
         _ = AXIsProcessTrustedWithOptions(promptOption)
     }
 
-    public func syncToNotes(from context: ModelContext, openNotes: Bool = false) async throws {
+    public func syncToNotes(from context: ModelContext, openNotes: Bool = false, applyChecklist: Bool = false) async throws {
         // Concurrency Guard: Prevent parallel colliding sync requests
         if isSyncing {
             hasPendingSyncRequest = true
@@ -665,7 +657,8 @@ public final class NotesSyncService {
             allTaskTitles: allTaskTitles,
             divisionHeadings: divisionHeadings,
             completedTitles: completedTitles,
-            openNotes: openNotes
+            openNotes: openNotes,
+            applyChecklist: applyChecklist || openNotes
         )
         self.lastSyncTime = Date()
     }
@@ -676,7 +669,8 @@ public final class NotesSyncService {
         allTaskTitles: [String] = [],
         divisionHeadings: [String] = [],
         completedTitles: [String] = [],
-        openNotes: Bool = false
+        openNotes: Bool = false,
+        applyChecklist: Bool = false
     ) async throws {
         var scriptLines: [String] = []
         scriptLines.append("""
@@ -716,9 +710,14 @@ public final class NotesSyncService {
 
         try await executeScript(scriptLines.joined(separator: "\n"))
 
-        // Apply native checklist format via System Events & Accessibility ONLY if openNotes is explicitly true AND accessibility is granted.
-        // Background sync MUST NEVER activate Notes, steal window focus, or open any window.
-        if openNotes && Self.isAccessibilityGranted {
+        // Apply native checklist format only when triggered by user mutation (15s idle) or explicit "Open in Notes".
+        // Pull-timer-triggered pushes skip this entirely.
+        if applyChecklist {
+            let axGranted = Self.isAccessibilityGranted
+            if !axGranted {
+                Self.requestAccessibilityPermission()
+                NSLog("⚠️ NotesSyncService: Accessibility NOT granted, requesting permission...")
+            }
             do {
                 try await applyNativeChecklist(
                     openNotes: openNotes,
@@ -726,7 +725,7 @@ public final class NotesSyncService {
                     divisionHeadings: divisionHeadings,
                     completedTitles: completedTitles
                 )
-                NSLog("✅ NotesSyncService: Native checklist format applied successfully!")
+                NSLog("✅ NotesSyncService: Native checklist format applied after idle")
             } catch {
                 NSLog("⚠️ NotesSyncService: Native checklist format error: %@", error.localizedDescription)
                 self.lastSyncError = error.localizedDescription
@@ -742,7 +741,6 @@ public final class NotesSyncService {
         divisionHeadings: [String],
         completedTitles: [String]
     ) async throws {
-        guard openNotes else { return }
         let origApp = NSWorkspace.shared.frontmostApplication
 
         // 1. Activate Notes and show note
@@ -820,7 +818,7 @@ public final class NotesSyncService {
             var cfRange = CFRange(location: loc, length: len)
             if let axRange = AXValueCreate(.cfRange, &cfRange) {
                 AXUIElementSetAttributeValue(ta, kAXSelectedTextRangeAttribute as CFString, axRange)
-                usleep(30_000)
+                usleep(25_000)
             }
         }
 
@@ -830,16 +828,55 @@ public final class NotesSyncService {
             return valRef as? String ?? ""
         }
 
+        // Cache Format menu items via AX for ultra-fast native clicking
+        var formatMenuItems: [String: AXUIElement] = [:]
+        var menuBarRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(appElement, kAXMenuBarAttribute as CFString, &menuBarRef)
+        if let menuBar = menuBarRef {
+            var menuBarItemsRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(menuBar as! AXUIElement, kAXChildrenAttribute as CFString, &menuBarItemsRef)
+            if let menuBarItems = menuBarItemsRef as? [AXUIElement] {
+                for item in menuBarItems {
+                    var titleRef: CFTypeRef?
+                    AXUIElementCopyAttributeValue(item, kAXTitleAttribute as CFString, &titleRef)
+                    if let title = titleRef as? String, title == "Format" {
+                        var menuRef: CFTypeRef?
+                        AXUIElementCopyAttributeValue(item, kAXChildrenAttribute as CFString, &menuRef)
+                        if let menus = menuRef as? [AXUIElement], let formatMenu = menus.first {
+                            var itemsRef: CFTypeRef?
+                            AXUIElementCopyAttributeValue(formatMenu, kAXChildrenAttribute as CFString, &itemsRef)
+                            if let items = itemsRef as? [AXUIElement] {
+                                for mi in items {
+                                    var miTitleRef: CFTypeRef?
+                                    AXUIElementCopyAttributeValue(mi, kAXTitleAttribute as CFString, &miTitleRef)
+                                    if let miTitle = miTitleRef as? String, !miTitle.isEmpty {
+                                        formatMenuItems[miTitle] = mi
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         func triggerFormatMenuItem(named name: String) {
+            if let mi = formatMenuItems[name] {
+                let res = AXUIElementPerformAction(mi, kAXPressAction as CFString)
+                if res == .success {
+                    usleep(25_000)
+                    return
+                }
+            }
             let script = "tell application \"System Events\" to tell process \"Notes\" to click menu item \"\(name)\" of menu \"Format\" of menu bar 1"
             var err: NSDictionary?
             NSAppleScript(source: script)?.executeAndReturnError(&err)
-            usleep(40_000)
+            usleep(30_000)
         }
 
         // Focus text area
         AXUIElementSetAttributeValue(ta, kAXFocusedAttribute as CFString, true as CFTypeRef)
-        usleep(50_000)
+        usleep(40_000)
 
         func findRangeOfLine(matching target: String, in text: String) -> (loc: Int, len: Int)? {
             var currentLoc = 0
@@ -847,7 +884,7 @@ public final class NotesSyncService {
             for line in lines {
                 let nsLine = line as NSString
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
-                let clean = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "✓☑○◯⚪️•*-[ ] \t"))
+                let clean = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "✓☑○◯⚪️•*-[ ] \t\u{00A0}"))
                 if clean == target || clean.caseInsensitiveCompare(target) == .orderedSame {
                     let offsetInLine = (line as NSString).range(of: trimmed).location
                     return (currentLoc + offsetInLine, (trimmed as NSString).length)
@@ -897,9 +934,13 @@ public final class NotesSyncService {
         }
         selectRange(loc: 0, len: 0)
 
-        // 4. Restore previous app if openNotes is false
+        // 4. Always restore previous app unless user explicitly wants Notes open
         if !openNotes, let orig = origApp {
-            usleep(100_000)
+            // Hide Notes window to avoid lingering, then immediately restore
+            let hideScript = "tell application \"System Events\" to set visible of process \"Notes\" to false"
+            var hErr: NSDictionary?
+            NSAppleScript(source: hideScript)?.executeAndReturnError(&hErr)
+            usleep(50_000)
             orig.activate()
         }
     }

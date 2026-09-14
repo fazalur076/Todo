@@ -84,6 +84,7 @@ public struct SettingsView: View {
         }
         .frame(width: 440, height: 490)
         .background(.ultraThinMaterial)
+        .preferredColorScheme(appState.appearanceMode == "light" ? .light : (appState.appearanceMode == "dark" ? .dark : nil))
     }
 
     // MARK: - General
@@ -642,7 +643,7 @@ public struct SettingsView: View {
         syncStatusMessage = nil
         Task {
             do {
-                try await notesSyncService.syncToNotes(from: modelContext)
+                try await notesSyncService.syncToNotes(from: modelContext, applyChecklist: true)
                 syncStatusMessage = "Successfully mirrored to Apple Notes! (\(Date().formatted(date: .omitted, time: .shortened)))"
             } catch {
                 syncStatusMessage = "Sync error: \(error.localizedDescription)"

@@ -21,9 +21,9 @@ public struct QuickCaptureView: View {
             // Header: Action hint
             HStack {
                 Text("QUICK CAPTURE")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .font(.system(size: 11, weight: .semibold, design: .default))
                     .foregroundStyle(.secondary)
-                    .tracking(1.2)
+                    .tracking(0.6)
 
                 Spacer()
 
@@ -156,6 +156,7 @@ public struct QuickCaptureView: View {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(Color.primary.opacity(0.12), lineWidth: 1)
         )
+        .preferredColorScheme(appState.appearanceMode == "light" ? .light : (appState.appearanceMode == "dark" ? .dark : nil))
         .shadow(color: .black.opacity(0.25), radius: 24, x: 0, y: 12)
         .onAppear {
             isInputFocused = true

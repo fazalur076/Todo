@@ -40,3 +40,5 @@ __pycache__/
 scratch/
 *.log
 *.store*
+.agents/
+.context/
