@@ -476,9 +476,7 @@ public struct TaskListView: View {
                                     showFocusSheet = true
                                 },
                                 onDelete: {
-                                    modelContext.delete(task)
-                                    try? modelContext.save()
-                                    NotesSyncService.shared.autoSync(context: modelContext)
+                                    NotesSyncService.shared.deleteTask(task, context: modelContext)
                                 },
                                 onMoveUp: { moveTaskUp(task) },
                                 onMoveDown: { moveTaskDown(task) }

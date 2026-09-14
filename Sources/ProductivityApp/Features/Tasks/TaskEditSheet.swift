@@ -218,9 +218,7 @@ public struct TaskEditSheet: View {
             // Footer Actions
             HStack(spacing: 12) {
                 Button(role: .destructive) {
-                    modelContext.delete(task)
-                    try? modelContext.save()
-                    NotesSyncService.shared.autoSync(context: modelContext)
+                    NotesSyncService.shared.deleteTask(task, context: modelContext)
                     dismiss()
                 } label: {
                     HStack(spacing: 4) {

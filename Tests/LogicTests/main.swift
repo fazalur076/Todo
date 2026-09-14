@@ -274,6 +274,21 @@ func runAllChecks() {
     assert(sortedList[2].id == taskDone.id, "Done task must move down to the bottom!")
     print("✅ Check 10 Passed: Done tasks move down, idle/active tasks stay on top verified.")
 
+    // Test 11: Deletion Tombstone prevents resurrection of deleted tasks
+    let taskToKill = TaskItem(title: "Task to be purged", workspace: .work, status: .pending)
+    context.insert(taskToKill)
+    try! context.save()
+
+    NotesSyncService.shared.deleteTask(taskToKill, context: context)
+    assert(NotesSyncService.shared.isTaskDeleted(title: "Task to be purged", workspace: .work), "Tombstone must be recorded for deleted task")
+
+    // Simulate reverse sync reading a stale note that still contains the deleted task:
+    let staleNotesHtml = "<div>○ Task to be purged</div>"
+    let parsedStale = NotesSyncService.shared.parseNotesBody(staleNotesHtml)
+    assert(parsedStale.count == 1, "Notes parser should extract stale task")
+    assert(NotesSyncService.shared.isTaskDeleted(title: parsedStale[0].title, workspace: parsedStale[0].workspace), "Tombstone must identify parsed stale task as deleted")
+    print("✅ Check 11 Passed: Deletion tombstone prevents zombie task resurrection verified.")
+
     print("\n🎉 ALL LOGIC CHECKS PASSED SUCCESSFULLY!\n")
 }
 

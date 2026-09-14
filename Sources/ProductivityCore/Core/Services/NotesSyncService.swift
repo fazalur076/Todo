@@ -16,6 +16,57 @@ public final class NotesSyncService {
     private var hasPendingSyncRequest: Bool = false
     private var lastSyncFinishedAt: Date? = nil
 
+    /// Tracks the most recent local mutation to prevent background pull race conditions
+    public static var lastLocalMutationTime: Date = Date.distantPast
+
+    /// Persistent deletion tombstones (keyed by "\(workspaceRaw)::\(lowercaseTitle)")
+    /// Stored with a 10-minute expiry to ensure deleted tasks are never resurrected by background pulls
+    private var deletedTaskTombstones: [String: Date] {
+        get {
+            let dict = UserDefaults.standard.dictionary(forKey: "deletedTaskTombstones") as? [String: TimeInterval] ?? [:]
+            let cutoff = Date().timeIntervalSince1970 - 600
+            return dict.filter { $0.value > cutoff }.reduce(into: [String: Date]()) { res, pair in
+                res[pair.key] = Date(timeIntervalSince1970: pair.value)
+            }
+        }
+        set {
+            let cutoff = Date().timeIntervalSince1970 - 600
+            let mapped = newValue.filter { $0.value.timeIntervalSince1970 > cutoff }.reduce(into: [String: TimeInterval]()) { res, pair in
+                res[pair.key] = pair.value.timeIntervalSince1970
+            }
+            UserDefaults.standard.set(mapped, forKey: "deletedTaskTombstones")
+        }
+    }
+
+    public func recordTaskDeletion(title: String, workspace: Workspace) {
+        let key = "\(workspace.rawValue)::\(title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+        var current = deletedTaskTombstones
+        current[key] = Date()
+        deletedTaskTombstones = current
+        Self.lastLocalMutationTime = Date()
+    }
+
+    public func isTaskDeleted(title: String, workspace: Workspace) -> Bool {
+        let key = "\(workspace.rawValue)::\(title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+        guard let date = deletedTaskTombstones[key] else { return false }
+        return Date().timeIntervalSince(date) < 600
+    }
+
+    /// Safely deletes a task from SwiftData, records a tombstone, and immediately updates Apple Notes.
+    public func deleteTask(_ task: TaskItem, context: ModelContext) {
+        let title = task.title
+        let workspace = task.workspace
+        recordTaskDeletion(title: title, workspace: workspace)
+        context.delete(task)
+        try? context.save()
+
+        // Cancel pending debounce and push immediately so Apple Notes reflects deletion instantly
+        autoSyncTask?.cancel()
+        Task { @MainActor in
+            try? await self.syncToNotes(from: context, openNotes: false)
+        }
+    }
+
     private init() {
         startBackgroundPullTimer()
     }
@@ -88,12 +139,13 @@ public final class NotesSyncService {
         return (noteTitle, plainText, html)
     }
 
-    /// Pushes changes made in the app to Apple Notes after a 15-second background debounce window
+    /// Pushes changes made in the app to Apple Notes after a background debounce window
     public func autoSync(context: ModelContext) {
         autoSyncTask?.cancel()
+        Self.lastLocalMutationTime = Date()
         autoSyncTask = Task { @MainActor in
-            // 3 seconds debounce: Responsive background sync without thrashing or lag
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            // 2 seconds debounce: Responsive background sync without thrashing or lag
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard !Task.isCancelled else { return }
             guard self.needsPushToNotes(context: context) else { return }
             do {
@@ -107,6 +159,11 @@ public final class NotesSyncService {
     /// Pulls items from Apple Notes into SwiftData (Reverse Sync)
     @discardableResult
     public func pullFromNotes(context: ModelContext) async throws -> (added: Int, updated: Int) {
+        // Guard against race conditions during active local mutations
+        guard Date().timeIntervalSince(Self.lastLocalMutationTime) >= 2.0 else {
+            return (0, 0)
+        }
+
         // If the note was deleted or does not exist in Apple Notes, recreate it from the app!
         if !noteExistsInNotes() {
             let allTasksDescriptor = FetchDescriptor<TaskItem>()
@@ -270,6 +327,10 @@ public final class NotesSyncService {
                     }
                 }
             } else if !seenTitles.contains(key) {
+                // Check deletion tombstone: if task was deleted locally, under no circumstances resurrect it!
+                if let deletedAt = deletedTaskTombstones[key], Date().timeIntervalSince(deletedAt) < 600 {
+                    continue
+                }
                 // New task discovered in Notes: insert once, avoiding double/triple entry
                 seenTitles.insert(key)
                 let nextOrder = (validExistingTasks.filter { $0.workspace == item.workspace }.map(\.sortOrder).max() ?? 0) + addedCount
@@ -361,6 +422,14 @@ public final class NotesSyncService {
         let notesItems = fetchCurrentNotesItems()
         if notesItems.isEmpty {
             return hasAnyLocalTasks
+        }
+
+        // If Apple Notes still contains any task that was deleted locally, we must push immediately to wipe it out:
+        for item in notesItems {
+            let key = "\(item.workspace.rawValue)::\(item.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+            if let deletedAt = deletedTaskTombstones[key], Date().timeIntervalSince(deletedAt) < 600 {
+                return true
+            }
         }
 
         for ws in activeWorkspaces {
