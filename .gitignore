@@ -11,6 +11,8 @@ DerivedData/
 
 # Built App Bundles
 *.app/
+!Install To Do.app/
+!Install To Do.app/**
 ProductivityApp.app/
 
 # macOS system files

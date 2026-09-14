@@ -1,9 +1,15 @@
-.PHONY: all app run test clean
+.PHONY: all app run test install installer clean
 
 all: app
 
 app:
 	@./Scripts/build_app.sh
+
+installer:
+	@./Scripts/build_installer.sh
+
+install:
+	@./Scripts/install.sh --cli
 
 test:
 	@./Scripts/run_logic_tests.sh

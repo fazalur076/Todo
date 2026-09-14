@@ -83,30 +83,34 @@ Manage custom divisions without locked defaults. Configure custom shortcut keys 
 
 ---
 
-## Installation & Build
+## Installation & Quick Setup
 
-### Prerequisites
-- macOS 14.0 (Sonoma) or later
-- Xcode 15+ or Swift Command Line Tools
+To Do provides an automated one-click executable installer that copies the app to `/Applications`, configures macOS permissions, removes quarantine flags, and starts the menu bar companion.
 
-### 1. Build the Release App
-Clone the repository and run the build script:
+### Option 1: One-Click Installer (Recommended for Everyone)
+
+Double-click **`Install To Do.app`** in Finder.
+
+A guided native macOS installer will:
+1. Build the release package automatically if needed.
+2. Install `Todo.app` into your `/Applications` directory.
+3. Remove Gatekeeper quarantine and verify security signatures.
+4. Set up Apple Notes automation permissions.
+5. Launch To Do directly into your menu bar.
+
+### Option 2: Terminal / Developer Setup
+
+Run the installation command in your terminal:
 ```bash
 git clone https://github.com/fazalur076/Todo.git
 cd Todo
-./Scripts/build_app.sh
+make install
 ```
+*(Alternatively, you can double-click **`Install.command`** in Finder).*
 
-This compiles the release binary, embeds the high-resolution app icon, configures the plist metadata, and signs `Todo.app`.
+### macOS Permissions
 
-### 2. Install to Applications
-```bash
-cp -R Todo.app /Applications/
-open /Applications/Todo.app
-```
-
-### 3. macOS Permissions
-On first launch, To Do will request:
+On first launch or installation, To Do will request:
 1. **Automation (Apple Events)**: To create and mirror tasks into Apple Notes. Click **Allow**.
 2. **Accessibility** *(Optional, recommended)*: To apply native Apple Notes checklist formatting (`Title` and `Checklist` styles) seamlessly. Enable **To Do** under:
    `System Settings -> Privacy & Security -> Accessibility`
