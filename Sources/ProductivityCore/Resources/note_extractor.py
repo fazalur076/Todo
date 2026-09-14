@@ -107,7 +107,7 @@ def get_notes_tasks(target_title="TASKS — TODAY"):
                 continue
 
             # Strip all list/checklist/bullet/emoji prefixes first to inspect the true content
-            clean_title = clean.lstrip('✓☑○◯⚪️•*-[ ] \t').strip()
+            clean_title = clean.lstrip('✓☑○◯⚪️◐•*-[ ] \t').strip()
             if not clean_title:
                 continue
 

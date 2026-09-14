@@ -39,17 +39,25 @@ public final class NotesSyncService {
     }
 
     public func recordTaskDeletion(title: String, workspace: Workspace) {
-        let key = "\(workspace.rawValue)::\(title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let key = "\(workspace.rawValue)::\(clean)"
         var current = deletedTaskTombstones
         current[key] = Date()
+        current["*::\(clean)"] = Date()
         deletedTaskTombstones = current
         Self.lastLocalMutationTime = Date()
     }
 
     public func isTaskDeleted(title: String, workspace: Workspace) -> Bool {
-        let key = "\(workspace.rawValue)::\(title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
-        guard let date = deletedTaskTombstones[key] else { return false }
-        return Date().timeIntervalSince(date) < 600
+        let clean = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let key = "\(workspace.rawValue)::\(clean)"
+        if let date = deletedTaskTombstones[key], Date().timeIntervalSince(date) < 600 {
+            return true
+        }
+        if let date = deletedTaskTombstones["*::\(clean)"], Date().timeIntervalSince(date) < 600 {
+            return true
+        }
+        return false
     }
 
     /// Safely deletes a task from SwiftData, records a tombstone, and immediately updates Apple Notes.
@@ -61,6 +69,20 @@ public final class NotesSyncService {
         try? context.save()
 
         // Cancel pending debounce and push immediately so Apple Notes reflects deletion instantly
+        autoSyncTask?.cancel()
+        Task { @MainActor in
+            try? await self.syncToNotes(from: context, openNotes: false)
+        }
+    }
+
+    /// Moves a task to a different division, updates mutation timestamps, and pushes to Apple Notes immediately
+    public func moveTask(_ task: TaskItem, to newWorkspace: Workspace, context: ModelContext) {
+        task.workspace = newWorkspace
+        task.updatedAt = Date()
+        Self.lastLocalMutationTime = Date()
+        try? context.save()
+
+        // Cancel pending debounce and push immediately so Apple Notes reflects the division move instantly
         autoSyncTask?.cancel()
         Task { @MainActor in
             try? await self.syncToNotes(from: context, openNotes: false)
@@ -121,12 +143,14 @@ public final class NotesSyncService {
                 html += "<div><i><font color=\"#8E8E93\">No active tasks</font></i></div>"
             } else {
                 for task in wsTasks {
-                    let mark = task.status == .completed ? "✓" : "○"
+                    let mark = task.status == .completed ? "✓" : (task.status == .inProgress ? "◐" : "○")
                     plain.append("\(mark) \(task.title)")
                     if task.status == .completed {
-                        html += "<div><strike><font color=\"#8E8E93\">\(escapeHtml(task.title))</font></strike></div>"
+                        html += "<div><font color=\"#34C759\"><b>✓</b></font>&nbsp;&nbsp;<strike><font color=\"#8E8E93\">\(escapeHtml(task.title))</font></strike></div>"
+                    } else if task.status == .inProgress {
+                        html += "<div><font color=\"#007AFF\"><b>◐</b></font>&nbsp;&nbsp;<b>\(escapeHtml(task.title))</b></div>"
                     } else {
-                        html += "<div>\(escapeHtml(task.title))</div>"
+                        html += "<div><font color=\"#8E8E93\"><b>○</b></font>&nbsp;&nbsp;\(escapeHtml(task.title))</div>"
                     }
                 }
             }
@@ -239,18 +263,36 @@ public final class NotesSyncService {
         let allTasksDescriptor = FetchDescriptor<TaskItem>()
         let existingTasks = (try? context.fetch(allTasksDescriptor)) ?? []
 
-        let notesKeys = Set(parsedItems.map { "\($0.workspace.rawValue)::\($0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())" })
+        let notesTitles = Set(parsedItems.map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
         var reservedHeaders: Set<String> = ["WORK", "PERSONAL", "FREELANCE", "TASKS — TODAY", "TASKS - TODAY", "NO ACTIVE TASKS", "TASKS", noteTitle.uppercased()]
         for ws in AppState.shared.workspaces {
             reservedHeaders.insert(ws.name.uppercased())
             reservedHeaders.insert(ws.id.uppercased())
         }
 
-        // 1. Purge corrupted tasks and synchronize deletions from Apple Notes
+        // 0. Deduplicate any duplicate tasks across workspaces in SwiftData (keep the one most recently updated)
         var purgedAny = false
-        var validExistingTasks: [TaskItem] = []
+        var seenCleanTitles: [String: TaskItem] = [:]
         for task in existingTasks {
+            let clean = task.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !clean.isEmpty else { continue }
+            if let existing = seenCleanTitles[clean] {
+                // Duplicate detected across workspaces: keep newer, delete older duplicate
+                let keep = task.updatedAt >= existing.updatedAt ? task : existing
+                let remove = task.updatedAt >= existing.updatedAt ? existing : task
+                context.delete(remove)
+                seenCleanTitles[clean] = keep
+                purgedAny = true
+            } else {
+                seenCleanTitles[clean] = task
+            }
+        }
+
+        // 1. Purge corrupted tasks and synchronize deletions from Apple Notes
+        var validExistingTasks: [TaskItem] = []
+        for task in seenCleanTitles.values {
             let clean = task.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanLower = clean.lowercased()
             let upper = clean.uppercased()
 
             // Delete headers or multiline corruption immediately
@@ -260,11 +302,10 @@ public final class NotesSyncService {
                 continue
             }
 
-            let key = "\(task.workspace.rawValue)::\(clean.lowercased())"
             let isTodayScope = task.isScheduledForToday || task.status == .inProgress || task.isOverdue || (task.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)
 
-            // If a task in today's scope is no longer in Apple Notes, and wasn't just created/edited locally, remove it
-            if isTodayScope && !notesKeys.contains(key) {
+            // If a task in today's scope is no longer in Apple Notes at all (across any division), and wasn't just created/edited locally, remove it
+            if isTodayScope && !notesTitles.contains(cleanLower) {
                 let isRecentlyCreatedLocally = Date().timeIntervalSince(task.createdAt) < 10.0
                 let isRecentlyModifiedLocally = Date().timeIntervalSince(task.updatedAt) < 10.0
                 if !isRecentlyCreatedLocally && !isRecentlyModifiedLocally {
@@ -294,45 +335,64 @@ public final class NotesSyncService {
 
         var addedCount = 0
         var updatedCount = 0
-        var seenTitles = Set(validExistingTasks.map { "\($0.workspace.rawValue)::\($0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())" })
+        var seenKeys = Set(validExistingTasks.map { "\($0.workspace.rawValue)::\($0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())" })
+        var seenTitlesGlobal = Set(validExistingTasks.map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
 
         for item in parsedItems {
             let cleanTitle = item.title.components(separatedBy: .newlines).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanTitle.isEmpty else { continue }
+            let cleanLower = cleanTitle.lowercased()
             let upper = cleanTitle.uppercased()
             if reservedHeaders.contains(upper) || upper.contains(noteTitle.uppercased()) || upper.contains("TASKS — TODAY") || upper.contains("TASKS - TODAY") {
                 continue
             }
 
-            let key = "\(item.workspace.rawValue)::\(cleanTitle.lowercased())"
+            let key = "\(item.workspace.rawValue)::\(cleanLower)"
 
+            // Match by title across ANY workspace to prevent duplicate cross-division creation
             let matching = validExistingTasks.first {
-                $0.workspace == item.workspace &&
-                $0.title.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(cleanTitle) == .orderedSame
+                $0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == cleanLower
             }
 
             if let task = matching {
-                // ProductivityApp is the primary Proof DB:
-                // Protect tasks modified locally in the app within the last 3 seconds from being overwritten
-                let isRecentlyModifiedLocally = Date().timeIntervalSince(task.updatedAt) < 3.0
-                if !isRecentlyModifiedLocally {
-                    if item.isCompleted && task.status != .completed {
-                        task.status = .completed
-                        task.completedAt = Date()
-                        updatedCount += 1
-                    } else if !item.isCompleted && task.status == .completed {
-                        task.status = .pending
-                        task.completedAt = nil
+                if task.workspace == item.workspace {
+                    // Same workspace: check status updates
+                    let isRecentlyModifiedLocally = Date().timeIntervalSince(task.updatedAt) < 3.0
+                    if !isRecentlyModifiedLocally {
+                        if item.isCompleted && task.status != .completed {
+                            task.status = .completed
+                            task.completedAt = Date()
+                            updatedCount += 1
+                        } else if !item.isCompleted && task.status == .completed {
+                            task.status = .pending
+                            task.completedAt = nil
+                            updatedCount += 1
+                        }
+                    }
+                } else {
+                    // Different workspace: task exists in another division
+                    let isRecentlyModifiedLocally = Date().timeIntervalSince(task.updatedAt) < 15.0 || Date().timeIntervalSince(Self.lastLocalMutationTime) < 15.0
+                    if !isRecentlyModifiedLocally {
+                        // User moved the task in Apple Notes on their phone/Mac: update app's division to match
+                        task.workspace = item.workspace
+                        task.updatedAt = Date()
                         updatedCount += 1
                     }
+                    // If recently moved locally in the app, the app is authoritative — preserve task.workspace!
                 }
-            } else if !seenTitles.contains(key) {
+                seenKeys.insert(key)
+                seenTitlesGlobal.insert(cleanLower)
+            } else if !seenKeys.contains(key) && !seenTitlesGlobal.contains(cleanLower) {
                 // Check deletion tombstone: if task was deleted locally, under no circumstances resurrect it!
                 if let deletedAt = deletedTaskTombstones[key], Date().timeIntervalSince(deletedAt) < 600 {
                     continue
                 }
+                if let deletedAt = deletedTaskTombstones["*::\(cleanLower)"], Date().timeIntervalSince(deletedAt) < 600 {
+                    continue
+                }
                 // New task discovered in Notes: insert once, avoiding double/triple entry
-                seenTitles.insert(key)
+                seenKeys.insert(key)
+                seenTitlesGlobal.insert(cleanLower)
                 let nextOrder = (validExistingTasks.filter { $0.workspace == item.workspace }.map(\.sortOrder).max() ?? 0) + addedCount
                 let newTask = TaskItem(
                     title: cleanTitle,
@@ -891,7 +951,7 @@ public final class NotesSyncService {
 
         let lines = normalized.components(separatedBy: "\n")
         let checkPrefixes = ["☑", "●", "[x]", "[X]", "✓", "✔"]
-        let uncheckPrefixes = ["☐", "○", "◯", "⚪️", "[ ]", "-", "*", "•"]
+        let uncheckPrefixes = ["☐", "○", "◯", "⚪️", "◐", "[ ]", "-", "*", "•"]
 
         for rawLine in lines {
             let isStrike = rawLine.localizedCaseInsensitiveContains("<strike>") ||

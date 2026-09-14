@@ -292,6 +292,7 @@ public struct TaskEditSheet: View {
     }
 
     private func saveChanges() {
+        let oldWorkspace = task.workspace
         task.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         task.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
@@ -299,7 +300,14 @@ public struct TaskEditSheet: View {
         task.status = status
         task.scheduledDate = scheduledDate
         task.updatedAt = Date()
+        NotesSyncService.lastLocalMutationTime = Date()
         try? modelContext.save()
-        NotesSyncService.shared.autoSync(context: modelContext)
+        if oldWorkspace != workspace {
+            Task { @MainActor in
+                try? await NotesSyncService.shared.syncToNotes(from: modelContext, openNotes: false)
+            }
+        } else {
+            NotesSyncService.shared.autoSync(context: modelContext)
+        }
     }
 }

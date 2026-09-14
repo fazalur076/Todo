@@ -262,9 +262,7 @@ public struct TaskRowView: View {
                     if ws.id != task.workspace.rawValue {
                         Button {
                             withAnimation {
-                                task.workspace = Workspace(rawValue: ws.id)
-                                try? modelContext.save()
-                                NotesSyncService.shared.autoSync(context: modelContext)
+                                NotesSyncService.shared.moveTask(task, to: Workspace(rawValue: ws.id), context: modelContext)
                             }
                         } label: {
                             HStack {
