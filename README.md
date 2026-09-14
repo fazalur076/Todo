@@ -98,6 +98,8 @@ A guided native macOS installer will:
 4. Set up Apple Notes automation permissions.
 5. Launch To Do directly into your menu bar.
 
+> Note on macOS Gatekeeper: If macOS displays an "unverified developer" or "move to bin" warning because the app was downloaded from the internet, either double-click `Install.command` (which clears the quarantine flag automatically) or go to **System Settings -> Privacy & Security**, scroll down to **Security**, and click **Open Anyway**.
+
 ### Option 2: Terminal / Developer Setup
 
 Run the installation command in your terminal:
