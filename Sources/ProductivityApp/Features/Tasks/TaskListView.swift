@@ -31,11 +31,18 @@ public struct TaskListView: View {
         self.onClose = onClose
     }
 
-    // Strictly isolated to current workspace only and sorted by sortOrder
+    // Strictly isolated to current workspace only and sorted: idle/active tasks on top, completed tasks at the bottom
     private var workspaceTasks: [TaskItem] {
         allTasks
             .filter { $0.workspace == appState.currentWorkspace }
-            .sorted { $0.sortOrder < $1.sortOrder }
+            .sorted { a, b in
+                let aCompleted = (a.status == .completed)
+                let bCompleted = (b.status == .completed)
+                if aCompleted != bCompleted {
+                    return !aCompleted
+                }
+                return a.sortOrder < b.sortOrder
+            }
     }
 
     private var pendingTasks: [TaskItem] {
@@ -657,19 +664,10 @@ public struct TaskListView: View {
     }
 
     private func triggerNotesSync() {
-        if !NotesSyncService.isAccessibilityGranted {
-            withAnimation {
-                notesToastMessage = "Notes update option restricted. Grant Accessibility in Settings for interactive checklist circles."
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-                withAnimation { notesToastMessage = nil }
-            }
-        }
-
         isSyncingNotes = true
         Task {
             do {
-                let result = try await NotesSyncService.shared.syncTwoWay(context: modelContext, openNotes: true)
+                let result = try await NotesSyncService.shared.syncTwoWay(context: modelContext, openNotes: false)
                 withAnimation {
                     if result.added > 0 || result.updated > 0 {
                         notesToastMessage = "Synced with Notes! (+\(result.added) new, \(result.updated) updated) 📝"

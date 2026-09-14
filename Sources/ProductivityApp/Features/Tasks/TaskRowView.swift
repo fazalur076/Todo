@@ -45,73 +45,79 @@ public struct TaskRowView: View {
                 .opacity(isHovered ? 0.9 : 0.4)
                 .frame(width: 12)
 
-            // Checkbox button on left: 1 time goes pending, 2 times goes completed, again 1 time goes back to unchecked mark
-            Button {
-                withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
-                    task.cycleStatus()
-                    try? modelContext.save()
-                    NotesSyncService.shared.autoSync(context: modelContext)
-                }
-            } label: {
+            // Primary clickable area (checkbox + title + notes + spacer + badges)
+            // Single-click on this area instantly cycles status:
+            // 1 click: Pending (unchecked) -> In Progress (blue dotted)
+            // 2 clicks: In Progress -> Completed (green checkmark)
+            // Next click: Completed -> Pending (unchecked mark)
+            HStack(alignment: .center, spacing: 10) {
+                // Checkbox icon on left
                 Image(systemName: task.status == .completed ? "checkmark.circle.fill" : (task.status == .inProgress ? "circle.dotted" : "circle"))
                     .font(.system(size: 17, weight: .medium))
                     .foregroundStyle(statusColor)
                     .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(task.status == .completed ? "Mark as unchecked" : (task.status == .inProgress ? "Mark as completed" : "Mark as in progress"))
 
-            // Title and notes excerpt
-            VStack(alignment: .leading, spacing: 3) {
-                Text(task.title)
-                    .font(.system(size: 13, weight: .regular))
-                    .strikethrough(task.status == .completed, color: .secondary)
-                    .foregroundStyle(task.status == .completed ? .secondary : .primary)
-                    .lineLimit(2)
+                // Title and notes excerpt
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(task.title)
+                        .font(.system(size: 13, weight: .regular))
+                        .strikethrough(task.status == .completed, color: .secondary)
+                        .foregroundStyle(task.status == .completed ? .secondary : .primary)
+                        .lineLimit(2)
 
-                if let notes = task.notes, !notes.isEmpty {
-                    Text(notes)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer()
-
-            // Badges (Focus minutes, Overdue, Tomorrow)
-            HStack(spacing: 6) {
-                if task.focusMinutes > 0 {
-                    HStack(spacing: 3) {
-                        Image(systemName: "timer")
-                            .font(.system(size: 10))
-                        Text("\(task.focusMinutes)m")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    if let notes = task.notes, !notes.isEmpty {
+                        Text(notes)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
                     }
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(Color.orange.opacity(0.12))
-                    .clipShape(Capsule())
                 }
 
-                if task.isOverdue {
-                    Text("Overdue")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.red)
+                Spacer()
+
+                // Badges (Focus minutes, Overdue, Tomorrow)
+                HStack(spacing: 6) {
+                    if task.focusMinutes > 0 {
+                        HStack(spacing: 3) {
+                            Image(systemName: "timer")
+                                .font(.system(size: 10))
+                            Text("\(task.focusMinutes)m")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        }
+                        .foregroundStyle(.orange)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Color.red.opacity(0.12))
+                        .background(Color.orange.opacity(0.12))
                         .clipShape(Capsule())
-                } else if !task.isScheduledForToday && task.status != .completed {
-                    Text("Tomorrow")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.1))
-                        .clipShape(Capsule())
+                    }
+
+                    if task.isOverdue {
+                        Text("Overdue")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.red.opacity(0.12))
+                            .clipShape(Capsule())
+                    } else if !task.isScheduledForToday && task.status != .completed {
+                        Text("Tomorrow")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.1))
+                            .clipShape(Capsule())
+                    }
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onSelect()
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                    task.cycleStatus()
+                    try? modelContext.save()
+                    NotesSyncService.shared.autoSync(context: modelContext)
                 }
             }
 
@@ -191,23 +197,6 @@ public struct TaskRowView: View {
             RoundedRectangle(cornerRadius: 8)
                 .fill(isSelected ? Color.accentColor.opacity(0.15) : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
         )
-        .contentShape(Rectangle())
-        // Double-click on row: Transition directly to Completed (or back to unchecked if already completed)
-        .onTapGesture(count: 2) {
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
-                if task.status == .completed {
-                    task.status = .pending
-                } else {
-                    task.status = .completed
-                }
-                try? modelContext.save()
-                NotesSyncService.shared.autoSync(context: modelContext)
-            }
-        }
-        // Single-click on row: Select row
-        .onTapGesture(count: 1) {
-            onSelect()
-        }
         .onHover { hovering in
             isHovered = hovering
         }

@@ -256,6 +256,24 @@ func runAllChecks() {
     assert(!Calendar.current.isDateInToday(completedOldTask.scheduledDate), "Completed task must remain on yesterday's date")
     print("✅ Check 9 Passed: Shortcuts (O/P), mutability, custom note title, and daily rollover verified.")
 
+    // Test 10: Done tasks move down, idle/active tasks stay on top
+    let taskPending = TaskItem(title: "Idle task", workspace: .work, status: .pending, sortOrder: 1)
+    let taskInProgress = TaskItem(title: "Active task", workspace: .work, status: .inProgress, sortOrder: 2)
+    let taskDone = TaskItem(title: "Done task", workspace: .work, status: .completed, sortOrder: 0) // had sortOrder 0 originally!
+
+    let sortedList = [taskDone, taskPending, taskInProgress].sorted { a, b in
+        let aCompleted = (a.status == .completed)
+        let bCompleted = (b.status == .completed)
+        if aCompleted != bCompleted {
+            return !aCompleted
+        }
+        return a.sortOrder < b.sortOrder
+    }
+    assert(sortedList[0].id == taskPending.id, "Idle task must be before completed task despite higher sortOrder")
+    assert(sortedList[1].id == taskInProgress.id, "Active task must be before completed task despite higher sortOrder")
+    assert(sortedList[2].id == taskDone.id, "Done task must move down to the bottom!")
+    print("✅ Check 10 Passed: Done tasks move down, idle/active tasks stay on top verified.")
+
     print("\n🎉 ALL LOGIC CHECKS PASSED SUCCESSFULLY!\n")
 }
 

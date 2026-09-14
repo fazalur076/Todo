@@ -52,6 +52,13 @@ public final class NotesSyncService {
             let wsTasks = allTasks.filter {
                 $0.workspaceRaw == wsDef.id &&
                 ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false))
+            }.sorted { a, b in
+                let aCompleted = (a.status == .completed)
+                let bCompleted = (b.status == .completed)
+                if aCompleted != bCompleted {
+                    return !aCompleted
+                }
+                return a.sortOrder < b.sortOrder
             }
 
             let heading = wsDef.name.uppercased()
@@ -578,18 +585,21 @@ public final class NotesSyncService {
 
         try await executeScript(scriptLines.joined(separator: "\n"))
 
-        // Apply native checklist format via System Events & Accessibility
-        do {
-            try await applyNativeChecklist(
-                openNotes: openNotes,
-                allTaskTitles: allTaskTitles,
-                divisionHeadings: divisionHeadings,
-                completedTitles: completedTitles
-            )
-            NSLog("✅ NotesSyncService: Native checklist format applied successfully!")
-        } catch {
-            NSLog("⚠️ NotesSyncService: Native checklist format error: %@", error.localizedDescription)
-            self.lastSyncError = error.localizedDescription
+        // Apply native checklist format via System Events & Accessibility ONLY if openNotes is explicitly true AND accessibility is granted.
+        // Background sync MUST NEVER activate Notes, steal window focus, or open any window.
+        if openNotes && Self.isAccessibilityGranted {
+            do {
+                try await applyNativeChecklist(
+                    openNotes: openNotes,
+                    allTaskTitles: allTaskTitles,
+                    divisionHeadings: divisionHeadings,
+                    completedTitles: completedTitles
+                )
+                NSLog("✅ NotesSyncService: Native checklist format applied successfully!")
+            } catch {
+                NSLog("⚠️ NotesSyncService: Native checklist format error: %@", error.localizedDescription)
+                self.lastSyncError = error.localizedDescription
+            }
         }
     }
 
@@ -601,6 +611,7 @@ public final class NotesSyncService {
         divisionHeadings: [String],
         completedTitles: [String]
     ) async throws {
+        guard openNotes else { return }
         let origApp = NSWorkspace.shared.frontmostApplication
 
         // 1. Activate Notes and show note
