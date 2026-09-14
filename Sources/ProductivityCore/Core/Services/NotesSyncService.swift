@@ -294,11 +294,13 @@ public final class NotesSyncService {
 
     /// Fetches native checklist states from NoteStore.sqlite via note_extractor.py
     private func fetchItemsFromNoteStore() -> [(title: String, workspace: Workspace, isCompleted: Bool)] {
-        let candidates = [
-            Bundle.main.resourcePath.map { "\($0)/note_extractor.py" },
-            "/Users/fazalurrahman/Desktop/Projects/Todo/Sources/ProductivityCore/Resources/note_extractor.py",
-            "/Users/fazalurrahman/Desktop/Projects/Todo/Todo.app/Contents/Resources/note_extractor.py"
-        ].compactMap { $0 }
+        var candidates: [String] = []
+        if let resPath = Bundle.main.resourcePath {
+            candidates.append("\(resPath)/note_extractor.py")
+        }
+        let currentDir = FileManager.default.currentDirectoryPath
+        candidates.append("\(currentDir)/Sources/ProductivityCore/Resources/note_extractor.py")
+        candidates.append("\(currentDir)/Todo.app/Contents/Resources/note_extractor.py")
 
         let divMap = AppState.shared.workspaces.reduce(into: [String: String]()) { dict, ws in
             dict[ws.name.uppercased()] = ws.id

@@ -75,9 +75,9 @@ Manage custom divisions without locked defaults. Configure custom shortcut keys 
 | `⌥⌘O` | **Switch to Work Division** | Global (dynamic) |
 | `⌥⌘P` | **Switch to Personal Division** | Global (dynamic) |
 | `⌥⌘F` | **Switch to Freelance Division** | Global (dynamic) |
-| `Return` | **Submit new inline task** | In Task Panel / Quick Capture |
-| `Space` | **Toggle task completion** | In Task Panel (when selected) |
-| `Delete` / `⌫` | **Delete task** | In Task Panel (when selected) |
+| `Return` | **Submit new task** | In Task Panel / Quick Capture |
+| `Click` | **Cycle task (Pending -> In Progress -> Completed)** | In Task Panel |
+| `⌘,` | **Open Preferences** | In Task Panel |
 
 *All division shortcuts (`⌥⌘[Key]`) dynamically update whenever you configure custom shortcuts in Preferences.*
 
