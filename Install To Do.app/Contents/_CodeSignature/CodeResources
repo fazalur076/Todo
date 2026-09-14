@@ -8,6 +8,30 @@
 		<data>
 		TMNDO/s0gtOSfuBGDP0RCiiKOZs=
 		</data>
+		<key>Resources/Todo.app/Contents/Info.plist</key>
+		<data>
+		DpdZ34zxObglB9iqZJP5oDy/bSk=
+		</data>
+		<key>Resources/Todo.app/Contents/MacOS/Todo</key>
+		<data>
+		X4teDMitLLEvnLWzbnLd+05Yl0U=
+		</data>
+		<key>Resources/Todo.app/Contents/Resources/AppIcon.icns</key>
+		<data>
+		TMNDO/s0gtOSfuBGDP0RCiiKOZs=
+		</data>
+		<key>Resources/Todo.app/Contents/Resources/note_extractor.py</key>
+		<data>
+		BShFT4JZEKkG//ZXVewMcdAqaKs=
+		</data>
+		<key>Resources/Todo.app/Contents/_CodeSignature/CodeResources</key>
+		<data>
+		Uf8xKIqAbbQCp2Orhhki4HCpP0w=
+		</data>
+		<key>Resources/install.sh</key>
+		<data>
+		Gq3HPD/gJJeaHOKStp82orDc+Uk=
+		</data>
 	</dict>
 	<key>files2</key>
 	<dict>
@@ -16,6 +40,48 @@
 			<key>hash2</key>
 			<data>
 			DAcYe7WbM5CJN2HooJ1TWDvfcvcaJ0o5HBzIXhjM0R8=
+			</data>
+		</dict>
+		<key>Resources/Todo.app/Contents/Info.plist</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			dsXnux6jlmNEigzoYnRZ2Xbk7x8LQLrHF0W1c+ZOlQA=
+			</data>
+		</dict>
+		<key>Resources/Todo.app/Contents/MacOS/Todo</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			DxaZxH1N6HRe0SH7RHM17rG1CuWEGNLsGwuQPC6hPmI=
+			</data>
+		</dict>
+		<key>Resources/Todo.app/Contents/Resources/AppIcon.icns</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			DAcYe7WbM5CJN2HooJ1TWDvfcvcaJ0o5HBzIXhjM0R8=
+			</data>
+		</dict>
+		<key>Resources/Todo.app/Contents/Resources/note_extractor.py</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			/DenIm3Uc1RpE52hVivBH+foHgZ7LVa6MXuqgJReCxo=
+			</data>
+		</dict>
+		<key>Resources/Todo.app/Contents/_CodeSignature/CodeResources</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			twivmv4F8UzqwrYbPp7fRl6zDXAYVayQR/5bxiv7d3c=
+			</data>
+		</dict>
+		<key>Resources/install.sh</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			6nh21lrMxJFBH3Ww+FAIBaQbwM7PVbeXkGZ7KKwLnYo=
 			</data>
 		</dict>
 	</dict>

@@ -13,6 +13,7 @@ DerivedData/
 *.app/
 !Install To Do.app/
 !Install To Do.app/**
+Install To Do.app/Contents/Resources/Todo.app/
 ProductivityApp.app/
 
 # macOS system files

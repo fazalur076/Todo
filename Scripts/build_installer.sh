@@ -7,10 +7,23 @@ cd "$DIR"
 INSTALLER_APP="$DIR/Install To Do.app"
 COMMAND_FILE="$DIR/Install.command"
 
-echo "📦 Assembling Install To Do.app..."
+echo "📦 Assembling Install To Do.app (Standalone Portable Bundle)..."
 rm -rf "$INSTALLER_APP"
 mkdir -p "$INSTALLER_APP/Contents/MacOS"
 mkdir -p "$INSTALLER_APP/Contents/Resources"
+
+# Ensure Todo.app is compiled
+if [ ! -d "$DIR/Todo.app" ]; then
+    "$DIR/Scripts/build_app.sh"
+fi
+
+# Embed Todo.app into installer resources
+echo "📥 Embedding Todo.app inside installer..."
+cp -R "$DIR/Todo.app" "$INSTALLER_APP/Contents/Resources/Todo.app"
+
+# Embed install script into installer resources
+cp "$DIR/Scripts/install.sh" "$INSTALLER_APP/Contents/Resources/install.sh"
+chmod +x "$INSTALLER_APP/Contents/Resources/install.sh"
 
 # Copy Icon
 if [ -f "$DIR/Sources/ProductivityApp/Resources/AppIcon.icns" ]; then
@@ -47,11 +60,11 @@ cat << 'EOF' > "$INSTALLER_APP/Contents/Info.plist"
 </plist>
 EOF
 
-# Executable launcher
+# Executable launcher invoking embedded install engine
 cat << 'EOF' > "$INSTALLER_APP/Contents/MacOS/installer"
 #!/bin/bash
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-exec "$DIR/Scripts/install.sh" --gui
+BUNDLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec "$BUNDLE_DIR/Resources/install.sh" --gui
 EOF
 chmod +x "$INSTALLER_APP/Contents/MacOS/installer"
 
@@ -68,6 +81,12 @@ exec "$DIR/Scripts/install.sh" --cli "$@"
 EOF
 chmod +x "$COMMAND_FILE"
 
-echo "✅ Created:"
-echo "  • $INSTALLER_APP (Double-click in Finder to install with native GUI)"
-echo "  • $COMMAND_FILE (Double-click in Finder to install via Terminal)"
+# Create a zip archive on the Desktop for effortless 1-click sharing
+ZIP_DEST="$HOME/Desktop/Install-To-Do.zip"
+echo "🗜 Creating shareable zip: $ZIP_DEST..."
+rm -f "$ZIP_DEST"
+ditto -c -k --sequesterRsrc --keepParent "$INSTALLER_APP" "$ZIP_DEST"
+
+echo "✅ Ready to share:"
+echo "  • $INSTALLER_APP (Double-click in Finder)"
+echo "  • $ZIP_DEST (Send this single zip file to any friend!)"
