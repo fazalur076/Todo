@@ -4,7 +4,7 @@ import SwiftData
 import ProductivityCore
 
 @main
-struct ProductivityApp: App {
+struct TodoApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {

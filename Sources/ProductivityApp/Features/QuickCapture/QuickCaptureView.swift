@@ -81,6 +81,40 @@ public struct QuickCaptureView: View {
                 }
                 .foregroundStyle(.secondary)
 
+                Menu {
+                    ForEach(appState.workspaces) { ws in
+                        Button {
+                            appState.currentWorkspace = Workspace(rawValue: ws.id)
+                        } label: {
+                            HStack {
+                                Text(ws.name)
+                                if appState.currentWorkspace.rawValue == ws.id {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(appState.currentWorkspace.accentColor)
+                            .frame(width: 6, height: 6)
+                        Text(appState.currentWorkspace.displayName)
+                            .font(.system(size: 12, weight: .medium))
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.04))
+                    .clipShape(Capsule())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
+
                 Spacer()
 
                 HStack(spacing: 12) {

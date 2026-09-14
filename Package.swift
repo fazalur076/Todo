@@ -2,24 +2,30 @@
 import PackageDescription
 
 let package = Package(
-    name: "ProductivityApp",
+    name: "Todo",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "ProductivityApp", targets: ["ProductivityApp"]),
+        .executable(name: "Todo", targets: ["Todo"]),
         .library(name: "ProductivityCore", targets: ["ProductivityCore"]),
         .executable(name: "LogicTests", targets: ["LogicTests"])
     ],
     targets: [
         .target(
             name: "ProductivityCore",
-            path: "Sources/ProductivityCore"
+            path: "Sources/ProductivityCore",
+            resources: [
+                .copy("Resources/note_extractor.py")
+            ]
         ),
         .executableTarget(
-            name: "ProductivityApp",
+            name: "Todo",
             dependencies: ["ProductivityCore"],
-            path: "Sources/ProductivityApp"
+            path: "Sources/ProductivityApp",
+            resources: [
+                .copy("Resources/AppIcon.icns")
+            ]
         ),
         .executableTarget(
             name: "LogicTests",

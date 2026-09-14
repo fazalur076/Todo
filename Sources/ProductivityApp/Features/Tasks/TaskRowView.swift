@@ -14,6 +14,7 @@ public struct TaskRowView: View {
 
     @State private var isHovered: Bool = false
     @Environment(\.modelContext) private var modelContext
+    private var appState = AppState.shared
 
     public init(
         task: TaskItem,
@@ -270,6 +271,27 @@ public struct TaskRowView: View {
 
             Button("Edit Task...") {
                 onEdit()
+            }
+
+            Menu("Move to Division") {
+                ForEach(appState.workspaces) { ws in
+                    if ws.id != task.workspace.rawValue {
+                        Button {
+                            withAnimation {
+                                task.workspace = Workspace(rawValue: ws.id)
+                                try? modelContext.save()
+                                NotesSyncService.shared.autoSync(context: modelContext)
+                            }
+                        } label: {
+                            HStack {
+                                Text(ws.name)
+                                if let key = ws.shortcutKey, !key.isEmpty {
+                                    Text("(⌥⌘\(key))")
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             Divider()

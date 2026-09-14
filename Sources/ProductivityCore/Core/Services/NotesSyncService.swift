@@ -30,76 +30,54 @@ public final class NotesSyncService {
     }
 
     public func buildNotesContent(from context: ModelContext) -> (title: String, plainText: String, htmlBody: String) {
-        let noteTitle = "TASKS — TODAY"
-
+        let noteTitle = AppState.shared.notesNoteTitle
         let taskDescriptor = FetchDescriptor<TaskItem>(
             sortBy: [SortDescriptor(\.sortOrder)]
         )
         let allTasks = (try? context.fetch(taskDescriptor)) ?? []
 
-        let workTasks = allTasks.filter { $0.workspace == .work && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
-        let personalTasks = allTasks.filter { $0.workspace == .personal && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
-
+        let activeWorkspaces = AppState.shared.workspaces
         let timeFormatter = DateFormatter()
         timeFormatter.dateFormat = "h:mm a"
         let updatedTime = timeFormatter.string(from: Date())
 
         // Plain text version with clean circular checklist symbols
         var plain: [String] = []
-        plain.append("TASKS — TODAY")
+        plain.append(noteTitle)
         plain.append("")
-        plain.append("WORK")
-        if workTasks.isEmpty {
-            plain.append("No active tasks")
-        } else {
-            for task in workTasks {
-                let mark = task.status == .completed ? "✓" : "○"
-                plain.append("\(mark) \(task.title)")
+
+        var html = "<div><b><h1>\(escapeHtml(noteTitle))</h1></b></div><div><br></div>"
+
+        for wsDef in activeWorkspaces {
+            let wsTasks = allTasks.filter {
+                $0.workspaceRaw == wsDef.id &&
+                ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false))
             }
-        }
-        plain.append("")
-        plain.append("PERSONAL")
-        if personalTasks.isEmpty {
-            plain.append("No active tasks")
-        } else {
-            for task in personalTasks {
-                let mark = task.status == .completed ? "✓" : "○"
-                plain.append("\(mark) \(task.title)")
+
+            let heading = wsDef.name.uppercased()
+            plain.append(heading)
+            html += "<div><h2>\(heading)</h2></div>"
+
+            if wsTasks.isEmpty {
+                plain.append("No active tasks")
+                html += "<div><i><font color=\"#8E8E93\">No active tasks</font></i></div>"
+            } else {
+                for task in wsTasks {
+                    let mark = task.status == .completed ? "✓" : "○"
+                    plain.append("\(mark) \(task.title)")
+                    if task.status == .completed {
+                        html += "<div><strike><font color=\"#8E8E93\">\(escapeHtml(task.title))</font></strike></div>"
+                    } else {
+                        html += "<div>\(escapeHtml(task.title))</div>"
+                    }
+                }
             }
+            plain.append("")
+            html += "<div><br></div>"
         }
-        plain.append("")
+
         plain.append("Updated \(updatedTime)")
-
         let plainText = plain.joined(separator: "\n")
-
-        // HTML version for Apple Notes: uses <h1> and <h2> semantic headers so Notes displays clean headings without checklist circles
-        var html = "<div><b><h1>TASKS — TODAY</h1></b></div><div><br></div>"
-        html += "<div><h2>WORK</h2></div>"
-        if workTasks.isEmpty {
-            html += "<div><i><font color=\"#8E8E93\">No active tasks</font></i></div>"
-        } else {
-            for task in workTasks {
-                if task.status == .completed {
-                    html += "<div><strike><font color=\"#8E8E93\">\(escapeHtml(task.title))</font></strike></div>"
-                } else {
-                    html += "<div>\(escapeHtml(task.title))</div>"
-                }
-            }
-        }
-        html += "<div><br></div>"
-        html += "<div><h2>PERSONAL</h2></div>"
-        if personalTasks.isEmpty {
-            html += "<div><i><font color=\"#8E8E93\">No active tasks</font></i></div>"
-        } else {
-            for task in personalTasks {
-                if task.status == .completed {
-                    html += "<div><strike><font color=\"#8E8E93\">\(escapeHtml(task.title))</font></strike></div>"
-                } else {
-                    html += "<div>\(escapeHtml(task.title))</div>"
-                }
-            }
-        }
-
         return (noteTitle, plainText, html)
     }
 
@@ -140,11 +118,13 @@ public final class NotesSyncService {
         var parsedItems = fetchItemsFromNoteStore()
 
         // Step 2: Fallback to AppleScript HTML body if SQLite parser found no items
+        let noteTitle = AppState.shared.notesNoteTitle
         if parsedItems.isEmpty {
             let scriptSource = """
             tell application "Notes"
                 set activeNotes to {}
-                repeat with n in (notes whose name is "TASKS — TODAY")
+                set targetTitle to "\(escapeAppleScript(noteTitle))"
+                repeat with n in (notes whose name is targetTitle)
                     try
                         set c to container of n
                         if (name of c) is not "Recently Deleted" then
@@ -152,6 +132,16 @@ public final class NotesSyncService {
                         end if
                     end try
                 end repeat
+                if (count of activeNotes) = 0 then
+                    repeat with n in (notes whose name is "TASKS — TODAY")
+                        try
+                            set c to container of n
+                            if (name of c) is not "Recently Deleted" then
+                                set end of activeNotes to n
+                            end if
+                        end try
+                    end repeat
+                end if
                 if (count of activeNotes) > 0 then
                     return body of item 1 of activeNotes
                 else
@@ -186,7 +176,11 @@ public final class NotesSyncService {
         let existingTasks = (try? context.fetch(allTasksDescriptor)) ?? []
 
         let notesKeys = Set(parsedItems.map { "\($0.workspace.rawValue)::\($0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())" })
-        let reservedHeaders: Set<String> = ["WORK", "PERSONAL", "TASKS — TODAY", "TASKS - TODAY", "NO ACTIVE TASKS", "TASKS"]
+        var reservedHeaders: Set<String> = ["WORK", "PERSONAL", "FREELANCE", "TASKS — TODAY", "TASKS - TODAY", "NO ACTIVE TASKS", "TASKS", noteTitle.uppercased()]
+        for ws in AppState.shared.workspaces {
+            reservedHeaders.insert(ws.name.uppercased())
+            reservedHeaders.insert(ws.id.uppercased())
+        }
 
         // 1. Purge corrupted tasks and synchronize deletions from Apple Notes
         var purgedAny = false
@@ -196,7 +190,7 @@ public final class NotesSyncService {
             let upper = clean.uppercased()
 
             // Delete headers or multiline corruption immediately
-            if reservedHeaders.contains(upper) || upper.contains("TASKS — TODAY") || upper.contains("TASKS - TODAY") || clean.contains("\n") || clean.contains("\r") {
+            if reservedHeaders.contains(upper) || upper.contains(noteTitle.uppercased()) || upper.contains("TASKS — TODAY") || upper.contains("TASKS - TODAY") || clean.contains("\n") || clean.contains("\r") {
                 context.delete(task)
                 purgedAny = true
                 continue
@@ -242,7 +236,7 @@ public final class NotesSyncService {
             let cleanTitle = item.title.components(separatedBy: .newlines).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanTitle.isEmpty else { continue }
             let upper = cleanTitle.uppercased()
-            if reservedHeaders.contains(upper) || upper.contains("TASKS — TODAY") || upper.contains("TASKS - TODAY") {
+            if reservedHeaders.contains(upper) || upper.contains(noteTitle.uppercased()) || upper.contains("TASKS — TODAY") || upper.contains("TASKS - TODAY") {
                 continue
             }
 
@@ -296,14 +290,19 @@ public final class NotesSyncService {
         let candidates = [
             Bundle.main.resourcePath.map { "\($0)/note_extractor.py" },
             "/Users/fazalurrahman/Desktop/Projects/Todo/Sources/ProductivityCore/Resources/note_extractor.py",
-            "/Users/fazalurrahman/Desktop/Projects/Todo/ProductivityApp.app/Contents/Resources/note_extractor.py"
+            "/Users/fazalurrahman/Desktop/Projects/Todo/Todo.app/Contents/Resources/note_extractor.py"
         ].compactMap { $0 }
+
+        let divMap = AppState.shared.workspaces.reduce(into: [String: String]()) { dict, ws in
+            dict[ws.name.uppercased()] = ws.id
+        }
+        let divJson = (try? String(data: JSONEncoder().encode(divMap), encoding: .utf8)) ?? "{}"
 
         for path in candidates {
             guard FileManager.default.fileExists(atPath: path) else { continue }
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-            process.arguments = [path]
+            process.arguments = [path, divJson, AppState.shared.notesNoteTitle]
             let pipe = Pipe()
             process.standardOutput = pipe
             do {
@@ -317,7 +316,7 @@ public final class NotesSyncService {
                 }
                 if let items = try? JSONDecoder().decode([ExtractedItem].self, from: data), !items.isEmpty {
                     return items.map {
-                        ($0.title, Workspace(rawValue: $0.workspace) ?? .work, $0.completed)
+                        ($0.title, Workspace(rawValue: $0.workspace), $0.completed)
                     }
                 }
             } catch {
@@ -334,44 +333,44 @@ public final class NotesSyncService {
         )
         let allTasks = (try? context.fetch(taskDescriptor)) ?? []
 
-        let localWorkTasks = allTasks.filter { $0.workspace == .work && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
-        let localPersonalTasks = allTasks.filter { $0.workspace == .personal && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
+        let activeWorkspaces = AppState.shared.workspaces
+        var localTasksByWs: [String: [TaskItem]] = [:]
+        for ws in activeWorkspaces {
+            let tasks = allTasks.filter {
+                $0.workspace.rawValue == ws.id &&
+                ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false))
+            }
+            localTasksByWs[ws.id] = tasks
+        }
+
+        let hasAnyLocalTasks = localTasksByWs.values.contains { !$0.isEmpty }
 
         if !noteExistsInNotes() {
-            return !localWorkTasks.isEmpty || !localPersonalTasks.isEmpty
+            return hasAnyLocalTasks
         }
 
         let notesItems = fetchCurrentNotesItems()
         if notesItems.isEmpty {
-            return !localWorkTasks.isEmpty || !localPersonalTasks.isEmpty
+            return hasAnyLocalTasks
         }
 
-        let notesWork = notesItems.filter { $0.workspace == .work }
-        let notesPersonal = notesItems.filter { $0.workspace == .personal }
+        for ws in activeWorkspaces {
+            let localTasks = localTasksByWs[ws.id] ?? []
+            let notesTasks = notesItems.filter { $0.workspace.rawValue == ws.id }
 
-        if localWorkTasks.count != notesWork.count || localPersonalTasks.count != notesPersonal.count {
-            return true
-        }
-
-        for local in localWorkTasks {
-            guard let match = notesWork.first(where: {
-                $0.title.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(local.title.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
-            }) else {
+            if localTasks.count != notesTasks.count {
                 return true
             }
-            if match.isCompleted != (local.status == .completed) {
-                return true
-            }
-        }
 
-        for local in localPersonalTasks {
-            guard let match = notesPersonal.first(where: {
-                $0.title.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(local.title.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
-            }) else {
-                return true
-            }
-            if match.isCompleted != (local.status == .completed) {
-                return true
+            for local in localTasks {
+                guard let match = notesTasks.first(where: {
+                    $0.title.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(local.title.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+                }) else {
+                    return true
+                }
+                if match.isCompleted != (local.status == .completed) {
+                    return true
+                }
             }
         }
 
@@ -384,10 +383,12 @@ public final class NotesSyncService {
             return storeItems
         }
 
+        let noteTitle = AppState.shared.notesNoteTitle
         let scriptSource = """
         tell application "Notes"
             set activeNotes to {}
-            repeat with n in (notes whose name is "TASKS — TODAY")
+            set targetTitle to "\(escapeAppleScript(noteTitle))"
+            repeat with n in (notes whose name is targetTitle)
                 try
                     set c to container of n
                     if (name of c) is not "Recently Deleted" then
@@ -395,6 +396,16 @@ public final class NotesSyncService {
                     end if
                 end try
             end repeat
+            if (count of activeNotes) = 0 then
+                repeat with n in (notes whose name is "TASKS — TODAY")
+                    try
+                        set c to container of n
+                        if (name of c) is not "Recently Deleted" then
+                            set end of activeNotes to n
+                        end if
+                    end try
+                end repeat
+            end if
             if (count of activeNotes) > 0 then
                 return body of item 1 of activeNotes
             else
@@ -411,12 +422,14 @@ public final class NotesSyncService {
         return []
     }
 
-    /// Checks whether an active (non-deleted) TASKS — TODAY note exists in Apple Notes
+    /// Checks whether an active (non-deleted) target note exists in Apple Notes
     public func noteExistsInNotes() -> Bool {
+        let noteTitle = AppState.shared.notesNoteTitle
         let scriptSource = """
         tell application "Notes"
             set activeNotes to {}
-            repeat with n in (notes whose name is "TASKS — TODAY")
+            set targetTitle to "\(escapeAppleScript(noteTitle))"
+            repeat with n in (notes whose name is targetTitle)
                 try
                     set c to container of n
                     if (name of c) is not "Recently Deleted" then
@@ -424,6 +437,16 @@ public final class NotesSyncService {
                     end if
                 end try
             end repeat
+            if (count of activeNotes) = 0 then
+                repeat with n in (notes whose name is "TASKS — TODAY")
+                    try
+                        set c to container of n
+                        if (name of c) is not "Recently Deleted" then
+                            set end of activeNotes to n
+                        end if
+                    end try
+                end repeat
+            end if
             return (count of activeNotes) > 0
         end tell
         """
@@ -491,18 +514,18 @@ public final class NotesSyncService {
         )
         let allTasks = (try? context.fetch(taskDescriptor)) ?? []
         
-        let workTasks = allTasks.filter { $0.workspace == .work && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
-        let personalTasks = allTasks.filter { $0.workspace == .personal && ($0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)) }
-
-        var completedTitles: [String] = []
-        for task in (workTasks + personalTasks) where task.status == .completed {
-            completedTitles.append(task.title)
+        let activeTasks = allTasks.filter {
+            $0.isScheduledForToday || $0.status == .inProgress || $0.isOverdue || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false)
         }
+
+        let allTaskTitles = activeTasks.map(\.title)
+        let completedTitles = activeTasks.filter { $0.status == .completed }.map(\.title)
+        let divisionHeadings = AppState.shared.workspaces.map { $0.name.uppercased() }
 
         try await syncDirectlyToNotes(
             htmlBody: content.htmlBody,
-            workTaskTitles: workTasks.map(\.title),
-            personalTaskTitles: personalTasks.map(\.title),
+            allTaskTitles: allTaskTitles,
+            divisionHeadings: divisionHeadings,
             completedTitles: completedTitles,
             openNotes: openNotes
         )
@@ -512,20 +535,15 @@ public final class NotesSyncService {
     /// Pure backend AppleScript sync: updates Apple Notes atomically, then applies native checklist format via System Events.
     private func syncDirectlyToNotes(
         htmlBody: String,
-        workTaskTitles: [String] = [],
-        personalTaskTitles: [String] = [],
+        allTaskTitles: [String] = [],
+        divisionHeadings: [String] = [],
         completedTitles: [String] = [],
         openNotes: Bool = false
     ) async throws {
-        let escapeAppleScript: (String) -> String = { str in
-            str.replacingOccurrences(of: "\\", with: "\\\\")
-               .replacingOccurrences(of: "\"", with: "\\\"")
-        }
-
         var scriptLines: [String] = []
         scriptLines.append("""
         tell application "Notes"
-            set noteTitle to "TASKS — TODAY"
+            set noteTitle to "\(escapeAppleScript(AppState.shared.notesNoteTitle))"
             set activeNotes to {}
             repeat with n in (notes whose name is noteTitle)
                 try
@@ -564,8 +582,8 @@ public final class NotesSyncService {
         do {
             try await applyNativeChecklist(
                 openNotes: openNotes,
-                workTaskTitles: workTaskTitles,
-                personalTaskTitles: personalTaskTitles,
+                allTaskTitles: allTaskTitles,
+                divisionHeadings: divisionHeadings,
                 completedTitles: completedTitles
             )
             NSLog("✅ NotesSyncService: Native checklist format applied successfully!")
@@ -575,21 +593,23 @@ public final class NotesSyncService {
         }
     }
 
-    /// Briefly activates Notes, applies Checklist format ONLY to task lines (ensuring WORK and PERSONAL are strictly Headings),
+    /// Briefly activates Notes, applies Checklist format ONLY to task lines (ensuring division headings are strictly Headings),
     /// marks completed tasks as checked, then restores previous app.
     private func applyNativeChecklist(
         openNotes: Bool,
-        workTaskTitles: [String],
-        personalTaskTitles: [String],
+        allTaskTitles: [String],
+        divisionHeadings: [String],
         completedTitles: [String]
     ) async throws {
         let origApp = NSWorkspace.shared.frontmostApplication
 
         // 1. Activate Notes and show note
+        let noteTitle = AppState.shared.notesNoteTitle
         let showScript = """
         tell application "Notes"
             set activeNotes to {}
-            repeat with n in (notes whose name is "TASKS — TODAY")
+            set targetTitle to "\(escapeAppleScript(noteTitle))"
+            repeat with n in (notes whose name is targetTitle)
                 try
                     set c to container of n
                     if (name of c) is not "Recently Deleted" then
@@ -597,6 +617,16 @@ public final class NotesSyncService {
                     end if
                 end try
             end repeat
+            if (count of activeNotes) = 0 then
+                repeat with n in (notes whose name is "TASKS — TODAY")
+                    try
+                        set c to container of n
+                        if (name of c) is not "Recently Deleted" then
+                            set end of activeNotes to n
+                        end if
+                    end try
+                end repeat
+            end if
             if (count of activeNotes) > 0 then
                 activate
                 show item 1 of activeNotes
@@ -686,7 +716,6 @@ public final class NotesSyncService {
         }
 
         // 1. Convert ONLY individual task lines to Checklist circles (NEVER the whole document!)
-        let allTaskTitles = workTaskTitles + personalTaskTitles
         for title in allTaskTitles {
             let clean = title.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !clean.isEmpty else { continue }
@@ -697,19 +726,19 @@ public final class NotesSyncService {
             }
         }
 
-        // 2. Format WORK and PERSONAL strictly as Headings to guarantee NO checklist circles
-        let tHeadings = getText()
-        if let (loc, len) = findRangeOfLine(matching: "WORK", in: tHeadings) {
-            selectRange(loc: loc, len: len)
-            triggerFormatMenuItem(named: "Heading")
+        // 2. Format all division headings strictly as Headings to guarantee NO checklist circles
+        for heading in divisionHeadings {
+            let curText = getText()
+            if let (loc, len) = findRangeOfLine(matching: heading, in: curText) {
+                selectRange(loc: loc, len: len)
+                triggerFormatMenuItem(named: "Heading")
+            }
         }
-        let tHeadings2 = getText()
-        if let (loc, len) = findRangeOfLine(matching: "PERSONAL", in: tHeadings2) {
+        let tTitle = getText()
+        if let (loc, len) = findRangeOfLine(matching: AppState.shared.notesNoteTitle, in: tTitle) {
             selectRange(loc: loc, len: len)
-            triggerFormatMenuItem(named: "Heading")
-        }
-        let tHeadings3 = getText()
-        if let (loc, len) = findRangeOfLine(matching: "TASKS — TODAY", in: tHeadings3) {
+            triggerFormatMenuItem(named: "Title")
+        } else if let (loc, len) = findRangeOfLine(matching: "TASKS — TODAY", in: tTitle) {
             selectRange(loc: loc, len: len)
             triggerFormatMenuItem(named: "Title")
         }
@@ -756,7 +785,19 @@ public final class NotesSyncService {
     public func parseNotesBody(_ raw: String) -> [(title: String, workspace: Workspace, isCompleted: Bool)] {
         var results: [(String, Workspace, Bool)] = []
         var currentWorkspace: Workspace = .work
-        let reservedHeaders: Set<String> = ["WORK", "PERSONAL", "TASKS — TODAY", "TASKS - TODAY", "NO ACTIVE TASKS", "TASKS"]
+        let noteTitle = AppState.shared.notesNoteTitle.uppercased()
+        var reservedHeaders: Set<String> = ["WORK", "PERSONAL", "FREELANCE", "TASKS — TODAY", "TASKS - TODAY", "NO ACTIVE TASKS", "TASKS", noteTitle]
+        
+        let wsDefs = AppState.shared.workspaces
+        var nameToWorkspace: [String: Workspace] = [:]
+        for ws in wsDefs {
+            let upper = ws.name.uppercased()
+            reservedHeaders.insert(upper)
+            reservedHeaders.insert(ws.id.uppercased())
+            nameToWorkspace[upper] = Workspace(rawValue: ws.id)
+            nameToWorkspace[ws.id.uppercased()] = Workspace(rawValue: ws.id)
+        }
+
         var seenTitles: Set<String> = []
 
         let normalized = raw
@@ -801,24 +842,37 @@ public final class NotesSyncService {
             if cleanTitle.isEmpty { continue }
 
             let upper = cleanTitle.uppercased()
-            if upper == "WORK" || upper.hasPrefix("WORK:") || upper == "WORK TASKS" {
-                currentWorkspace = .work
-                continue
+
+            // Check division header matches
+            var matchedWs: Workspace?
+            if let direct = nameToWorkspace[upper] {
+                matchedWs = direct
+            } else {
+                for (name, ws) in nameToWorkspace {
+                    if upper == "\(name):" || upper == "\(name) TASKS" {
+                        matchedWs = ws
+                        break
+                    }
+                }
             }
-            if upper == "PERSONAL" || upper.hasPrefix("PERSONAL:") || upper == "PERSONAL TASKS" {
-                currentWorkspace = .personal
-                continue
-            }
-            if reservedHeaders.contains(upper) || upper.contains("TASKS — TODAY") || upper.contains("TASKS - TODAY") || upper.contains("UPDATED ") || upper.hasPrefix("NO ACTIVE") {
+
+            if let ws = matchedWs {
+                currentWorkspace = ws
                 continue
             }
 
-            if cleanTitle.hasPrefix("[Work]") || cleanTitle.hasPrefix("[work]") {
-                currentWorkspace = .work
-                cleanTitle = String(cleanTitle.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
-            } else if cleanTitle.hasPrefix("[Personal]") || cleanTitle.hasPrefix("[personal]") {
-                currentWorkspace = .personal
-                cleanTitle = String(cleanTitle.dropFirst(10)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if reservedHeaders.contains(upper) || upper.contains(noteTitle) || upper.contains("TASKS — TODAY") || upper.contains("TASKS - TODAY") || upper.contains("UPDATED ") || upper.hasPrefix("NO ACTIVE") {
+                continue
+            }
+
+            // Check bracketed prefix like [Work], [Personal], [Freelance] or [Custom]
+            for (name, ws) in nameToWorkspace {
+                let prefix = "[\(name.lowercased())]"
+                if cleanTitle.lowercased().hasPrefix(prefix) {
+                    currentWorkspace = ws
+                    cleanTitle = String(cleanTitle.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    break
+                }
             }
 
             if cleanTitle.isEmpty || reservedHeaders.contains(cleanTitle.uppercased()) {
@@ -842,5 +896,10 @@ public final class NotesSyncService {
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
             .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    private func escapeAppleScript(_ str: String) -> String {
+        return str.replacingOccurrences(of: "\\", with: "\\\\")
+                  .replacingOccurrences(of: "\"", with: "\\\"")
     }
 }

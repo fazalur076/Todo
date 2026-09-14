@@ -9,8 +9,8 @@ test:
 	@./Scripts/run_logic_tests.sh
 
 run: app
-	@open ProductivityApp.app
+	@open Todo.app
 
 clean:
-	@rm -rf .build ProductivityApp.app
+	@rm -rf .build Todo.app ProductivityApp.app Cadence.app
 	@echo "Cleaned build artifacts."

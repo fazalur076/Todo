@@ -183,6 +183,83 @@ func runAllChecks() {
     assert(workTask1.sortOrder == 1, "workTask1 sortOrder should be 1")
     print("✅ Check 6 Passed: Task reordering logic verified.")
 
+    // Test 8: Dynamic Divisions CRUD and EOD inclusion/exclusion
+    let appState = AppState.shared
+    let initialCount = appState.workspaces.count
+    let freelanceWsDef = appState.workspaces.first(where: { $0.id == "freelance" })
+    assert(freelanceWsDef != nil, "Freelance division should exist in presets")
+    assert(freelanceWsDef?.includeInEOD == true, "Freelance should be included in EOD by default")
+
+    // Add a custom client division
+    let newDef = appState.addWorkspace(name: "Acme Corp", shortcutKey: "A", colorHex: "#DB2777", includeInEOD: true)
+    assert(appState.workspaces.count == initialCount + 1, "Workspace count should increase by 1")
+    let acmeWs = Workspace(rawValue: newDef.id)
+
+    let acmeTask = TaskItem(
+        title: "Build client onboarding flow",
+        workspace: acmeWs,
+        status: .completed,
+        scheduledDate: today
+    )
+    context.insert(acmeTask)
+    try! context.save()
+
+    let reportWithAcme = EODService.shared.generateReport(from: context, targetDate: today)
+    assert(reportWithAcme.completedTasks.contains(where: { $0.title == "Build client onboarding flow" }), "Acme Corp task should be included in EOD when includeInEOD is true")
+    assert(reportWithAcme.formattedText.contains("Build client onboarding flow"), "EOD text should include Acme Corp task")
+
+    // Update Acme Corp to exclude from EOD
+    if var acmeDef = appState.workspaces.first(where: { $0.id == newDef.id }) {
+        acmeDef.includeInEOD = false
+        appState.updateWorkspace(acmeDef)
+    }
+    let reportWithoutAcme = EODService.shared.generateReport(from: context, targetDate: today)
+    assert(!reportWithoutAcme.completedTasks.contains(where: { $0.title == "Build client onboarding flow" }), "Acme Corp task must NOT be included in EOD when includeInEOD is false")
+
+    // Test 10: Shortcut Keys (O for Work, P for Personal), Mutability, and Customizable Notes Title
+    let workDef = appState.workspaces.first(where: { $0.id == "work" })
+    let personalDef = appState.workspaces.first(where: { $0.id == "personal" })
+    assert(workDef?.shortcutKey == "O", "Work shortcut key must be O (⌥⌘O)")
+    assert(personalDef?.shortcutKey == "P", "Personal shortcut key must be P (⌥⌘P)")
+    assert(workDef?.isSystem == false, "Work division must be editable/deletable (isSystem == false)")
+    assert(personalDef?.isSystem == false, "Personal division must be editable/deletable (isSystem == false)")
+
+    // Test customizable Notes note title
+    let originalTitle = appState.notesNoteTitle
+    appState.notesNoteTitle = "DAILY FOCUS — 2026"
+    assert(appState.notesNoteTitle == "DAILY FOCUS — 2026", "Notes note title should be customizable")
+    let testNotesContent = NotesSyncService.shared.buildNotesContent(from: context)
+    assert(testNotesContent.title == "DAILY FOCUS — 2026", "buildNotesContent should reflect custom note title")
+    assert(testNotesContent.plainText.hasPrefix("DAILY FOCUS — 2026"), "plainText should start with custom note title")
+    appState.notesNoteTitle = originalTitle
+
+    // Test 11: Daily Rollover
+    let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: today)!
+    let unfinishedOldTask = TaskItem(
+        title: "Unfinished yesterday task",
+        workspace: .work,
+        status: .pending,
+        scheduledDate: yesterday
+    )
+    let completedOldTask = TaskItem(
+        title: "Finished yesterday task",
+        workspace: .work,
+        status: .completed,
+        scheduledDate: yesterday
+    )
+    completedOldTask.completedAt = yesterday
+    context.insert(unfinishedOldTask)
+    context.insert(completedOldTask)
+    try! context.save()
+
+    // Force rollover trigger by setting lastRolloverDate to yesterday
+    UserDefaults.standard.set(yesterday, forKey: "lastRolloverDate")
+    appState.performDailyRolloverIfNeeded(context: context)
+
+    assert(Calendar.current.isDateInToday(unfinishedOldTask.scheduledDate), "Unfinished yesterday task must roll over to today")
+    assert(!Calendar.current.isDateInToday(completedOldTask.scheduledDate), "Completed task must remain on yesterday's date")
+    print("✅ Check 9 Passed: Shortcuts (O/P), mutability, custom note title, and daily rollover verified.")
+
     print("\n🎉 ALL LOGIC CHECKS PASSED SUCCESSFULLY!\n")
 }
 

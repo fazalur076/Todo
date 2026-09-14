@@ -4,21 +4,25 @@ set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR"
 
-echo "🔨 Building ProductivityApp (Release)..."
-/usr/bin/swift build -c release --product ProductivityApp
+echo "🔨 Building To Do (Release)..."
+/usr/bin/swift build -c release --product Todo
 
-BIN_PATH="$DIR/.build/release/ProductivityApp"
-APP_BUNDLE="$DIR/ProductivityApp.app"
+BIN_PATH="$DIR/.build/release/Todo"
+APP_BUNDLE="$DIR/Todo.app"
+rm -rf "$DIR/ProductivityApp.app" "$DIR/Cadence.app"
 
 echo "📦 Assembling $APP_BUNDLE..."
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
-cp "$BIN_PATH" "$APP_BUNDLE/Contents/MacOS/ProductivityApp"
+cp "$BIN_PATH" "$APP_BUNDLE/Contents/MacOS/Todo"
 if [ -f "$DIR/Sources/ProductivityCore/Resources/note_extractor.py" ]; then
     cp "$DIR/Sources/ProductivityCore/Resources/note_extractor.py" "$APP_BUNDLE/Contents/Resources/note_extractor.py"
     chmod +x "$APP_BUNDLE/Contents/Resources/note_extractor.py"
+fi
+if [ -f "$DIR/Sources/ProductivityApp/Resources/AppIcon.icns" ]; then
+    cp "$DIR/Sources/ProductivityApp/Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 fi
 
 cat << 'EOF' > "$APP_BUNDLE/Contents/Info.plist"
@@ -29,13 +33,15 @@ cat << 'EOF' > "$APP_BUNDLE/Contents/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleIdentifier</key>
-    <string>com.productivity.app</string>
+    <string>com.todo.macos</string>
     <key>CFBundleName</key>
-    <string>Productivity</string>
+    <string>To Do</string>
     <key>CFBundleDisplayName</key>
-    <string>Productivity</string>
+    <string>To Do</string>
     <key>CFBundleExecutable</key>
-    <string>ProductivityApp</string>
+    <string>Todo</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleVersion</key>
     <string>1.0.0</string>
     <key>CFBundleShortVersionString</key>
@@ -51,12 +57,12 @@ cat << 'EOF' > "$APP_BUNDLE/Contents/Info.plist"
     <key>NSAppleScriptEnabled</key>
     <true/>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Productivity needs permission to mirror your daily tasks to Apple Notes.</string>
+    <string>To Do mirrors your daily tasks with Apple Notes seamlessly in the background.</string>
 </dict>
 </plist>
 EOF
 
-echo "✍️ Signing $APP_BUNDLE with stable designated identifier..."
-codesign --force --deep -s - -i com.productivity.app -r='designated => identifier "com.productivity.app"' "$APP_BUNDLE" 2>/dev/null || true
+echo "✍️ Signing $APP_BUNDLE with designated identifier..."
+codesign --force --deep -s - -i com.todo.macos -r='designated => identifier "com.todo.macos"' "$APP_BUNDLE" 2>/dev/null || true
 
 echo "✅ Successfully built: $APP_BUNDLE"

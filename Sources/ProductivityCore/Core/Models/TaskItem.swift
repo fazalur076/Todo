@@ -45,7 +45,7 @@ public final class TaskItem {
     public var pomodoroCount: Int
 
     public var workspace: Workspace {
-        get { Workspace(rawValue: workspaceRaw) ?? .work }
+        get { Workspace(rawValue: workspaceRaw) }
         set { workspaceRaw = newValue.rawValue; updatedAt = Date() }
     }
 

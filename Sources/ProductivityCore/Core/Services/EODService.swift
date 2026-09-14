@@ -21,16 +21,14 @@ public final class EODService {
         let startOfDay = calendar.startOfDay(for: targetDate)
         let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) ?? targetDate
 
-        // Fetch tasks: strictly filter by WORK only
-        let workRaw = Workspace.work.rawValue
+        // Fetch tasks: filter by all workspaces configured to includeInEOD
+        let allowedWorkspaces = Set(AppState.shared.workspaces.filter(\.includeInEOD).map(\.id))
         let taskDescriptor = FetchDescriptor<TaskItem>(
-            predicate: #Predicate<TaskItem> { item in
-                item.workspaceRaw == workRaw
-            },
             sortBy: [SortDescriptor(\.sortOrder)]
         )
 
-        let allWorkTasks = (try? context.fetch(taskDescriptor)) ?? []
+        let allTasks = (try? context.fetch(taskDescriptor)) ?? []
+        let allWorkTasks = allTasks.filter { allowedWorkspaces.contains($0.workspaceRaw) }
 
         // Completed today
         let completed = allWorkTasks.filter { task in
@@ -48,14 +46,11 @@ public final class EODService {
             task.status == .pending && (task.scheduledDate <= endOfDay)
         }
 
-        // Fetch today's Work focus sessions
-        let sessionDescriptor = FetchDescriptor<FocusSession>(
-            predicate: #Predicate<FocusSession> { session in
-                session.workspaceRaw == workRaw
-            }
-        )
+        // Fetch today's focus sessions for allowed EOD workspaces
+        let sessionDescriptor = FetchDescriptor<FocusSession>()
         let allSessions = (try? context.fetch(sessionDescriptor)) ?? []
         let todaySessions = allSessions.filter { session in
+            allowedWorkspaces.contains(session.workspaceRaw) &&
             session.completedAt >= startOfDay && session.completedAt < endOfDay
         }
         let totalFocusMinutes = todaySessions.reduce(0) { $0 + $1.durationMinutes }

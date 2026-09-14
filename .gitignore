@@ -26,6 +26,7 @@ Icon
 *.jpeg
 *.mov
 *.mp4
+!Assets/**
 
 # Python / Scripts cache
 __pycache__/

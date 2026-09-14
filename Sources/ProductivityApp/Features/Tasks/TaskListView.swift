@@ -158,8 +158,15 @@ public struct TaskListView: View {
             // Silently pull any new or updated tasks from Apple Notes
             _ = try? await NotesSyncService.shared.pullFromNotes(context: modelContext)
         }
+        .onAppear {
+            appState.performDailyRolloverIfNeeded(context: modelContext)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            appState.performDailyRolloverIfNeeded(context: modelContext)
+        }
         .onChange(of: appState.panelOpenCount) {
             resetToFirstView()
+            appState.performDailyRolloverIfNeeded(context: modelContext)
         }
         .onChange(of: appState.isMainPanelPresented) { _, isPresented in
             if !isPresented {
@@ -260,56 +267,6 @@ public struct TaskListView: View {
                     .foregroundStyle(.secondary.opacity(0.8))
             }
 
-            // Interactive Workspace switcher badge
-            Menu {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        appState.currentWorkspace = .work
-                    }
-                } label: {
-                    HStack {
-                        Text("Work")
-                        if appState.currentWorkspace == .work {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        appState.currentWorkspace = .personal
-                    }
-                } label: {
-                    HStack {
-                        Text("Personal")
-                        if appState.currentWorkspace == .personal {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(appState.currentWorkspace == .work ? Color.blue : Color.purple)
-                        .frame(width: 6, height: 6)
-                    Text(appState.currentWorkspace.displayName)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.primary)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.primary.opacity(0.06))
-                .clipShape(Capsule())
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .buttonStyle(.plain)
-            .focusEffectDisabled()
-            .help("Switch Workspace (⌥⌘W / ⌥⌘P)")
-
             Spacer()
 
             HStack(spacing: 8) {
@@ -333,6 +290,26 @@ public struct TaskListView: View {
 
                 // More Menu
                 Menu {
+                    Menu("Switch Division") {
+                        ForEach(appState.workspaces) { ws in
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    appState.currentWorkspace = Workspace(rawValue: ws.id)
+                                }
+                            } label: {
+                                HStack {
+                                    Text(ws.name)
+                                    if let key = ws.shortcutKey, !key.isEmpty {
+                                        Text("(⌥⌘\(key))")
+                                    }
+                                    if appState.currentWorkspace.rawValue == ws.id {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Divider()
                     Button("Sync with Notes Now") {
                         triggerNotesSync()
                     }

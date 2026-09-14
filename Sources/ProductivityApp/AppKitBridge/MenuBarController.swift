@@ -195,13 +195,19 @@ public final class MenuBarController: NSObject {
 
             menu.addItem(NSMenuItem.separator())
 
-            let itemWork = NSMenuItem(title: "Switch to Work (⌥⌘W)", action: #selector(switchToWorkAction), keyEquivalent: "")
-            itemWork.target = self
-            menu.addItem(itemWork)
+            for ws in AppState.shared.workspaces {
+                let shortcut = ws.shortcutKey.map { " (⌥⌘\($0))" } ?? ""
+                let item = NSMenuItem(title: "Switch to \(ws.name)\(shortcut)", action: #selector(switchDivisionFromMenu(_:)), keyEquivalent: "")
+                item.representedObject = ws.id
+                item.target = self
+                menu.addItem(item)
+            }
 
-            let itemPersonal = NSMenuItem(title: "Switch to Personal (⌥⌘P)", action: #selector(switchToPersonalAction), keyEquivalent: "")
-            itemPersonal.target = self
-            menu.addItem(itemPersonal)
+            menu.addItem(NSMenuItem.separator())
+
+            let itemPrefs = NSMenuItem(title: "Preferences...", action: #selector(openPreferencesAction), keyEquivalent: ",")
+            itemPrefs.target = self
+            menu.addItem(itemPrefs)
 
             menu.addItem(NSMenuItem.separator())
 
@@ -225,14 +231,16 @@ public final class MenuBarController: NSObject {
         showQuickCapture()
     }
 
-    @objc private func switchToWorkAction() {
-        AppState.shared.switchToWorkspace(.work)
-        openMainPanel()
+    @objc private func switchDivisionFromMenu(_ sender: NSMenuItem) {
+        if let wsId = sender.representedObject as? String {
+            AppState.shared.switchToWorkspace(Workspace(rawValue: wsId))
+            openMainPanel()
+        }
     }
 
-    @objc private func switchToPersonalAction() {
-        AppState.shared.switchToWorkspace(.personal)
+    @objc private func openPreferencesAction() {
         openMainPanel()
+        AppState.shared.isSettingsPresented = true
     }
 
     @objc private func quitAction() {
@@ -251,7 +259,7 @@ public final class MenuBarController: NSObject {
             button.image = NSImage(systemSymbolName: "timer", accessibilityDescription: "Focus Timer")
             button.title = " \(focusService.formattedTimeRemaining)"
         } else {
-            button.image = NSImage(systemSymbolName: "checklist", accessibilityDescription: "Productivity")
+            button.image = NSImage(systemSymbolName: "checklist", accessibilityDescription: "To Do")
             button.title = ""
         }
     }

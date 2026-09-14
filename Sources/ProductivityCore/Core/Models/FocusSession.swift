@@ -12,7 +12,7 @@ public final class FocusSession {
     public var completedAt: Date
 
     public var workspace: Workspace {
-        get { Workspace(rawValue: workspaceRaw) ?? .work }
+        get { Workspace(rawValue: workspaceRaw) }
         set { workspaceRaw = newValue.rawValue }
     }
 

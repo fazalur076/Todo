@@ -11,6 +11,7 @@ public struct TaskEditSheet: View {
 
     @State private var title: String
     @State private var notes: String
+    @State private var workspace: Workspace
     @State private var status: TaskStatus
     @State private var scheduledDate: Date
 
@@ -19,6 +20,7 @@ public struct TaskEditSheet: View {
         self.onClose = onClose
         _title = State(initialValue: task.title)
         _notes = State(initialValue: task.notes ?? "")
+        _workspace = State(initialValue: task.workspace)
         _status = State(initialValue: task.status)
         _scheduledDate = State(initialValue: task.scheduledDate)
     }
@@ -76,6 +78,49 @@ public struct TaskEditSheet: View {
                                 RoundedRectangle(cornerRadius: 8)
                                     .stroke(Color.primary.opacity(0.1), lineWidth: 1)
                             )
+                    }
+
+                    // Division Selector
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("DIVISION")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.secondary)
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(AppState.shared.workspaces) { ws in
+                                    let isSelected = workspace.rawValue == ws.id
+                                    let wsColor = Color(hex: ws.colorHex) ?? Color.accentColor
+                                    Button {
+                                        withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
+                                            workspace = Workspace(rawValue: ws.id)
+                                        }
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            Circle()
+                                                .fill(wsColor)
+                                                .frame(width: 7, height: 7)
+                                            Text(ws.name)
+                                                .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+                                            if let key = ws.shortcutKey, !key.isEmpty {
+                                                Text("⌥⌘\(key)")
+                                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                                    .opacity(0.6)
+                                            }
+                                        }
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(isSelected ? wsColor.opacity(0.18) : Color.primary.opacity(0.04))
+                                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 7)
+                                                .stroke(isSelected ? wsColor.opacity(0.5) : Color.primary.opacity(0.08), lineWidth: 1)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
                     }
 
                     // Status Pills
@@ -252,6 +297,7 @@ public struct TaskEditSheet: View {
         task.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         task.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
+        task.workspace = workspace
         task.status = status
         task.scheduledDate = scheduledDate
         task.updatedAt = Date()
