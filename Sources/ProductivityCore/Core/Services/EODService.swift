@@ -55,48 +55,14 @@ public final class EODService {
         }
         let totalFocusMinutes = todaySessions.reduce(0) { $0 + $1.durationMinutes }
 
-        let formattedDateString = Self.dateFormatter.string(from: targetDate)
         var lines: [String] = []
-        lines.append("EOD — \(formattedDateString)")
-        lines.append("")
-
-        lines.append("Completed")
+        lines.append("Today’s report:")
         if completed.isEmpty {
             lines.append("• (None)")
         } else {
             for task in completed {
                 lines.append("• \(task.title)")
             }
-        }
-        lines.append("")
-
-        lines.append("In Progress")
-        if inProgress.isEmpty {
-            lines.append("• (None)")
-        } else {
-            for task in inProgress {
-                lines.append("• \(task.title)")
-            }
-        }
-        lines.append("")
-
-        lines.append("Carried Forward")
-        if carriedForward.isEmpty {
-            lines.append("• (None)")
-        } else {
-            for task in carriedForward {
-                lines.append("• \(task.title)")
-            }
-        }
-        lines.append("")
-
-        lines.append("Focus Time")
-        let hours = totalFocusMinutes / 60
-        let mins = totalFocusMinutes % 60
-        if hours > 0 {
-            lines.append("\(hours)h \(String(format: "%02dm", mins))")
-        } else {
-            lines.append("\(mins)m")
         }
 
         let fullText = lines.joined(separator: "\n")

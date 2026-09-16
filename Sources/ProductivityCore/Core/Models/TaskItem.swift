@@ -104,14 +104,6 @@ public final class TaskItem {
     }
 
     public var isOverdue: Bool {
-        status != .completed && scheduledDate < Calendar.current.startOfDay(for: Date())
-    }
-
-    public func moveToTomorrow() {
-        let calendar = Calendar.current
-        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) {
-            self.scheduledDate = tomorrow
-            self.updatedAt = Date()
-        }
+        false
     }
 }

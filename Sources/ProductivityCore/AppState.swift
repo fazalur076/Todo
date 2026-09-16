@@ -45,7 +45,10 @@ public final class AppState {
     }
 
     public var syncNotesEnabled: Bool {
-        didSet { UserDefaults.standard.set(syncNotesEnabled, forKey: "syncNotesEnabled") }
+        didSet {
+            UserDefaults.standard.set(syncNotesEnabled, forKey: "syncNotesEnabled")
+            NotesSyncService.shared.handleSyncSettingChanged(syncNotesEnabled)
+        }
     }
 
     public var onAppearanceChange: ((String) -> Void)? = nil
@@ -254,20 +257,41 @@ public final class AppState {
         let todayString = ISO8601DateFormatter().string(from: today)
         let lastDayString = UserDefaults.standard.string(forKey: "lastRolloverDateKey")
 
-        let descriptor = FetchDescriptor<TaskItem>(
+        var didRollover = false
+
+        // 1. Purge completed tasks from prior days so completed tasks vanish automatically each day
+        let completedDescriptor = FetchDescriptor<TaskItem>(
+            predicate: #Predicate<TaskItem> { item in
+                item.statusRaw == "completed"
+            }
+        )
+        if let completedTasks = try? context.fetch(completedDescriptor) {
+            for task in completedTasks {
+                let isCompletedToday = task.completedAt.map { calendar.isDateInToday($0) } ?? false
+                if !isCompletedToday {
+                    NotesSyncService.shared.recordTaskDeletion(title: task.title, workspace: task.workspace)
+                    context.delete(task)
+                    didRollover = true
+                }
+            }
+        }
+
+        // 2. Roll unfinished pending/in-progress tasks forward to today so they stay without being overdue
+        let pendingDescriptor = FetchDescriptor<TaskItem>(
             predicate: #Predicate<TaskItem> { item in
                 item.statusRaw != "completed" && item.scheduledDate < today
             }
         )
-
-        var didRollover = false
-        if let overdueTasks = try? context.fetch(descriptor), !overdueTasks.isEmpty {
-            for task in overdueTasks {
+        if let pastPending = try? context.fetch(pendingDescriptor), !pastPending.isEmpty {
+            for task in pastPending {
                 task.scheduledDate = today
                 task.updatedAt = Date()
             }
-            try? context.save()
             didRollover = true
+        }
+
+        if didRollover {
+            try? context.save()
         }
 
         if didRollover || lastDayString != todayString {

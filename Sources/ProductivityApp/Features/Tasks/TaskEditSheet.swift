@@ -159,22 +159,6 @@ public struct TaskEditSheet: View {
                             }
                             .buttonStyle(.plain)
 
-                            Button {
-                                let cal = Calendar.current
-                                if let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date())) {
-                                    scheduledDate = tomorrow
-                                }
-                            } label: {
-                                Text("Tomorrow")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 5)
-                                    .background(isTomorrow ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.05))
-                                    .foregroundStyle(isTomorrow ? Color.accentColor : .primary)
-                                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                            }
-                            .buttonStyle(.plain)
-
                             Spacer()
                         }
                     }

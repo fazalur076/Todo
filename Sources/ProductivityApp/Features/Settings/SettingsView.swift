@@ -643,7 +643,7 @@ public struct SettingsView: View {
         syncStatusMessage = nil
         Task {
             do {
-                try await notesSyncService.syncToNotes(from: modelContext, applyChecklist: true)
+                try await notesSyncService.syncToNotes(from: modelContext)
                 syncStatusMessage = "Successfully mirrored to Apple Notes! (\(Date().formatted(date: .omitted, time: .shortened)))"
             } catch {
                 syncStatusMessage = "Sync error: \(error.localizedDescription)"

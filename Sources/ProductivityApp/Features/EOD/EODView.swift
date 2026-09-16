@@ -62,7 +62,7 @@ public struct EODView: View {
 
     private var todayEODView: some View {
         VStack(spacing: 12) {
-            Text("Generated automatically from Work tasks completed, active, and carried forward today.")
+            Text("Generated automatically from tasks completed today.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)

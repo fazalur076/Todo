@@ -14,7 +14,7 @@
 		</data>
 		<key>Resources/Todo.app/Contents/MacOS/Todo</key>
 		<data>
-		XByDutWzy+mUczqIeftFqIa4Peo=
+		U37fJ66ftArmFST8J/hq3mEhIEw=
 		</data>
 		<key>Resources/Todo.app/Contents/Resources/AppIcon.icns</key>
 		<data>
@@ -22,11 +22,11 @@
 		</data>
 		<key>Resources/Todo.app/Contents/Resources/note_extractor.py</key>
 		<data>
-		BShFT4JZEKkG//ZXVewMcdAqaKs=
+		tpJPpBWluBrx7Q4LyZ1gQN5kBGI=
 		</data>
 		<key>Resources/Todo.app/Contents/_CodeSignature/CodeResources</key>
 		<data>
-		Uf8xKIqAbbQCp2Orhhki4HCpP0w=
+		WUYYIaqF4qafcIAmcCje34e25xE=
 		</data>
 		<key>Resources/install.sh</key>
 		<data>
@@ -53,7 +53,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			EkzCQ1jYIKTHJT8ms9AbiC3TKGHpZAd7WuMMkzXpQro=
+			V3oLUCQq0zZY4GuAthH0/CJEgemE71GHiZjjksHts/A=
 			</data>
 		</dict>
 		<key>Resources/Todo.app/Contents/Resources/AppIcon.icns</key>
@@ -67,14 +67,14 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			/DenIm3Uc1RpE52hVivBH+foHgZ7LVa6MXuqgJReCxo=
+			UrLBR5t15DKT8vp4ksSiAUcVCU4tWY+aGgby2ErmFew=
 			</data>
 		</dict>
 		<key>Resources/Todo.app/Contents/_CodeSignature/CodeResources</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			twivmv4F8UzqwrYbPp7fRl6zDXAYVayQR/5bxiv7d3c=
+			vu7nYtHj1QNmxBVGDrsQNByJdR/+s6u4eTsxUquV330=
 			</data>
 		</dict>
 		<key>Resources/install.sh</key>

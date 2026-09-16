@@ -77,34 +77,37 @@ func runAllChecks() {
     context.insert(session)
     try! context.save()
 
-    // Test 2: Move to Tomorrow
+    // Test 2: Daily Rollover & Vanishing Completed Tasks
     assert(workTask3.isScheduledForToday == true, "Task 3 should initially be scheduled for today")
-    workTask3.moveToTomorrow()
-    assert(workTask3.isScheduledForToday == false, "Task 3 should no longer be scheduled for today after moveToTomorrow")
-    let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today)!
-    assert(Calendar.current.isDate(workTask3.scheduledDate, inSameDayAs: tomorrow), "Scheduled date must match tomorrow")
-    print("✅ Check 1 Passed: Move to Tomorrow date calculation verified.")
+    assert(workTask1.status == .completed, "Task 1 should be completed")
+    // If a task was completed yesterday, daily rollover should purge it
+    let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: today)!
+    let oldCompletedTask = TaskItem(title: "Old Completed Task", workspace: .work, status: .completed, scheduledDate: yesterday)
+    oldCompletedTask.completedAt = yesterday
+    context.insert(oldCompletedTask)
+    try! context.save()
 
-    // Test 3: Strict Workspace Isolation in EOD Report
+    AppState.shared.performDailyRolloverIfNeeded(context: context)
+    let remainingDescriptor = FetchDescriptor<TaskItem>()
+    let remainingTasks = (try! context.fetch(remainingDescriptor)).map(\.title)
+    assert(!remainingTasks.contains("Old Completed Task"), "Old completed task should vanish automatically after rollover")
+    print("✅ Check 1 Passed: Daily rollover purges prior completed tasks automatically.")
+
+    // Test 3: Simplified EOD Report (Only completed tasks under Today's report:)
     let report = EODService.shared.generateReport(from: context, targetDate: today)
 
     // Assert that personal tasks are NEVER present
     for task in report.completedTasks {
         assert(task.workspace == .work, "CRITICAL: Non-work task found in completed EOD!")
     }
-    for task in report.inProgressTasks {
-        assert(task.workspace == .work, "CRITICAL: Non-work task found in in-progress EOD!")
-    }
-    for task in report.carriedForwardTasks {
-        assert(task.workspace == .work, "CRITICAL: Non-work task found in carried forward EOD!")
-    }
 
+    assert(report.formattedText.contains("Today’s report:"), "EOD header must be 'Today’s report:'")
+    assert(report.formattedText.contains("• Fix crash in API"), "EOD text missing completed work task bullet")
+    assert(!report.formattedText.contains("In Progress"), "EOD must NOT contain In Progress section")
+    assert(!report.formattedText.contains("Carried Forward"), "EOD must NOT contain Carried Forward section")
+    assert(!report.formattedText.contains("Focus Time"), "EOD must NOT contain Focus Time section")
     assert(!report.formattedText.contains("Buy groceries"), "CRITICAL PRIVACY BREACH: Personal task leaked in EOD formatted text!")
-    assert(!report.formattedText.contains("Evening workout"), "CRITICAL PRIVACY BREACH: Personal task leaked in EOD formatted text!")
-    assert(report.formattedText.contains("Fix crash in API"), "EOD text missing completed work task")
-    assert(report.formattedText.contains("Refactor database query"), "EOD text missing in-progress work task")
-    assert(report.focusMinutes == 50, "Focus minutes must match total completed work sessions (expected 50, got \(report.focusMinutes))")
-    print("✅ Check 2 Passed: Work/Personal isolation in EOD strictly verified (0 Personal tasks leaked).")
+    print("✅ Check 2 Passed: Simplified EOD report format verified.")
 
     // Test 4: Apple Notes export circular checklist formatting
     let (noteTitle, plainText, html) = NotesSyncService.shared.buildNotesContent(from: context)
@@ -115,8 +118,8 @@ func runAllChecks() {
     assert(plainText.contains("○ Refactor database query") || plainText.contains("◐ Refactor database query"), "Incomplete task must have checklist symbol")
     assert(!plainText.contains("☐"), "Square unicode box ☐ must NOT appear in output")
     assert(html.contains("TASKS — TODAY"), "HTML body missing header")
-    assert(html.contains("<b>✓</b>"), "HTML body missing ✓ checkmark for completed tasks")
-    assert(html.contains("<b>○</b>") || html.contains("<b>◐</b>"), "HTML body missing visual checklist circle marker for active tasks")
+    assert(html.contains("✓"), "HTML body missing ✓ checkmark for completed tasks")
+    assert(html.contains("○") || html.contains("◐"), "HTML body missing visual checklist circle marker for active tasks")
     assert(!html.contains("<div>Fix crash in API</div>"), "HTML must NOT display bare unadorned task names without checklist markers")
     print("✅ Check 3 Passed: Apple Notes checklist structure verified (visual checklist markers present).")
 
@@ -232,30 +235,31 @@ func runAllChecks() {
     appState.notesNoteTitle = originalTitle
 
     // Test 11: Daily Rollover
-    let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: today)!
+    let prevDay = Calendar.current.date(byAdding: .day, value: -1, to: today)!
     let unfinishedOldTask = TaskItem(
         title: "Unfinished yesterday task",
         workspace: .work,
         status: .pending,
-        scheduledDate: yesterday
+        scheduledDate: prevDay
     )
     let completedOldTask = TaskItem(
         title: "Finished yesterday task",
         workspace: .work,
         status: .completed,
-        scheduledDate: yesterday
+        scheduledDate: prevDay
     )
-    completedOldTask.completedAt = yesterday
+    completedOldTask.completedAt = prevDay
     context.insert(unfinishedOldTask)
     context.insert(completedOldTask)
     try! context.save()
 
-    // Force rollover trigger by setting lastRolloverDate to yesterday
-    UserDefaults.standard.set(yesterday, forKey: "lastRolloverDate")
+    // Force rollover trigger by setting lastRolloverDateKey to yesterday
+    UserDefaults.standard.set(ISO8601DateFormatter().string(from: prevDay), forKey: "lastRolloverDateKey")
     appState.performDailyRolloverIfNeeded(context: context)
 
     assert(Calendar.current.isDateInToday(unfinishedOldTask.scheduledDate), "Unfinished yesterday task must roll over to today")
-    assert(!Calendar.current.isDateInToday(completedOldTask.scheduledDate), "Completed task must remain on yesterday's date")
+    let afterRolloverTasks = (try! context.fetch(FetchDescriptor<TaskItem>())).map(\.title)
+    assert(!afterRolloverTasks.contains("Finished yesterday task"), "Completed task from yesterday must vanish automatically")
     print("✅ Check 9 Passed: Shortcuts (O/P), mutability, custom note title, and daily rollover verified.")
 
     // Test 10: Done tasks move down, idle/active tasks stay on top

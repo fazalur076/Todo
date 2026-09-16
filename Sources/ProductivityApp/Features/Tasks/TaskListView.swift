@@ -20,23 +20,26 @@ public struct TaskListView: View {
     @State private var isAddingInline: Bool = false
     @FocusState private var isInlineAddFocused: Bool
 
-    @State private var showMoveUnfinishedConfirmation: Bool = false
     @State private var showFocusSheet: Bool = false
     @State private var showEODSheet: Bool = false
     @State private var showSettingsSheet: Bool = false
 
     @State private var isSyncingNotes: Bool = false
     @State private var notesToastMessage: String? = nil
-    @State private var showAccessibilityInfoSheet: Bool = false
 
     public init(onClose: (() -> Void)? = nil) {
         self.onClose = onClose
     }
 
-    // Strictly isolated to current workspace only and sorted: idle/active tasks on top, completed tasks at the bottom
+    // Strictly isolated to current workspace only:
+    // - Unfinished tasks stay until completed
+    // - Completed tasks vanish automatically unless completed today
     private var workspaceTasks: [TaskItem] {
         allTasks
-            .filter { $0.workspace == appState.currentWorkspace }
+            .filter {
+                $0.workspace == appState.currentWorkspace &&
+                ($0.status != .completed || ($0.completedAt.map { Calendar.current.isDateInToday($0) } ?? false))
+            }
             .sorted { a, b in
                 let aCompleted = (a.status == .completed)
                 let bCompleted = (b.status == .completed)
@@ -75,57 +78,7 @@ public struct TaskListView: View {
             // Header Bar
             headerView
 
-            // Accessibility missing warning banner
-            if !NotesSyncService.isAccessibilityGranted {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .font(.system(size: 11))
-                    Text("Notes update option not allowed. Please grant Accessibility permission.")
-                        .font(.system(size: 11, weight: .medium))
-                        .lineLimit(1)
-                    Spacer()
-                    Button {
-                        showAccessibilityInfoSheet = true
-                    } label: {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.blue)
-                    }
-                    .buttonStyle(.plain)
-                    .popover(isPresented: $showAccessibilityInfoSheet) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label("Why Accessibility?", systemImage: "hand.raised.circle")
-                                .font(.headline)
-                            Text("Productivity only uses accessibility shortcuts (⇧⌘L and ⇧⌘U) to format interactive checklist circles in Apple Notes.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text("We do not access, monitor, log, or store your keystrokes, screen, or any other apps.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Button("Open System Settings...") {
-                                let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
-                                NSWorkspace.shared.open(url)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .padding(.top, 4)
-                        }
-                        .padding()
-                        .frame(width: 280)
-                    }
-                    Button("Settings") {
-                        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
-                        NSWorkspace.shared.open(url)
-                    }
-                    .font(.system(size: 10, weight: .medium))
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 5)
-                .background(Color.orange.opacity(0.12))
-            }
+
 
             // Toast feedback banner
             if let toast = notesToastMessage {
@@ -252,18 +205,7 @@ public struct TaskListView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
-        .confirmationDialog(
-            "Move all unfinished tasks to tomorrow?",
-            isPresented: $showMoveUnfinishedConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Move \(unfinishedTasks.count) tasks to Tomorrow") {
-                moveUnfinishedToTomorrow()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will reschedule all \(unfinishedTasks.count) unfinished tasks to tomorrow.")
-        }
+
     }
 
     // MARK: - Header
@@ -301,6 +243,22 @@ public struct TaskListView: View {
                 .focusEffectDisabled()
                 .help("Focus Timer (⌥⌘F)")
 
+                // Phone / Apple Notes Sync Toggle
+                Button {
+                    toggleNotesSync()
+                } label: {
+                    Image(systemName: appState.syncNotesEnabled ? "iphone.gen3.radiowaves.left.and.right" : "iphone.slash")
+                        .font(.system(size: 13))
+                        .foregroundStyle(appState.syncNotesEnabled ? Color.accentColor : Color.secondary)
+                        .frame(width: 30, height: 30)
+                        .background(appState.syncNotesEnabled ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.06))
+                        .clipShape(Circle())
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
+                .help(appState.syncNotesEnabled ? "iPhone & Notes Sync: Enabled (Click to switch to Local Only)" : "iPhone & Notes Sync: Disabled (Click to enable Sync)")
+
                 // More Menu
                 Menu {
                     Menu("Switch Division") {
@@ -323,19 +281,19 @@ public struct TaskListView: View {
                         }
                     }
                     Divider()
-                    Button("Sync with Notes Now") {
-                        triggerNotesSync()
+                    Button(appState.syncNotesEnabled ? "Disable iPhone/Notes Sync" : "Enable iPhone/Notes Sync") {
+                        toggleNotesSync()
+                    }
+                    if appState.syncNotesEnabled {
+                        Button("Sync with Notes Now") {
+                            triggerNotesSync()
+                        }
                     }
                     Button("Generate EOD Report...") {
                         withAnimation(.easeInOut(duration: 0.16)) {
                             showEODSheet = true
                         }
                     }
-                    Divider()
-                    Button("Move Unfinished to Tomorrow...") {
-                        showMoveUnfinishedConfirmation = true
-                    }
-                    .disabled(unfinishedTasks.isEmpty)
                     Divider()
                     Button("Settings...") {
                         withAnimation(.easeInOut(duration: 0.16)) {
@@ -651,23 +609,7 @@ public struct TaskListView: View {
             .focusEffectDisabled()
             .help("Generate End-of-Day summary")
 
-            // Quick Move to Tomorrow button
-            if !unfinishedTasks.isEmpty {
-                Button {
-                    showMoveUnfinishedConfirmation = true
-                } label: {
-                    Image(systemName: "arrow.right.to.line")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 30, height: 30)
-                        .background(Color.primary.opacity(0.06))
-                        .clipShape(Circle())
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .focusEffectDisabled()
-                .help("Move unfinished tasks to tomorrow")
-            }
+
 
             // Settings button
             Button {
@@ -720,6 +662,20 @@ public struct TaskListView: View {
         }
     }
 
+    private func toggleNotesSync() {
+        withAnimation(.easeInOut(duration: 0.16)) {
+            appState.syncNotesEnabled.toggle()
+            if appState.syncNotesEnabled {
+                notesToastMessage = "iPhone & Notes Sync: Enabled 📱"
+            } else {
+                notesToastMessage = "iPhone & Notes Sync: Disabled (Local Only) 🔒"
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            withAnimation { notesToastMessage = nil }
+        }
+    }
+
     private func submitInlineTask() {
         let trimmed = newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -742,20 +698,10 @@ public struct TaskListView: View {
         isInlineNotesExpanded = false
     }
 
-    private func moveUnfinishedToTomorrow() {
-        for task in unfinishedTasks {
-            task.moveToTomorrow()
-        }
-        try? modelContext.save()
-        NotesSyncService.shared.autoSync(context: modelContext)
-    }
-
     private func resetToFirstView() {
         showSettingsSheet = false
         showFocusSheet = false
         showEODSheet = false
-        showMoveUnfinishedConfirmation = false
-        showAccessibilityInfoSheet = false
         taskToEdit = nil
         selectedTaskId = nil
         appState.isSettingsPresented = false

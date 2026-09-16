@@ -76,7 +76,7 @@ public struct TaskRowView: View {
 
                 Spacer()
 
-                // Badges (Focus minutes, Overdue, Tomorrow)
+                // Badges (Focus minutes)
                 HStack(spacing: 6) {
                     if task.focusMinutes > 0 {
                         HStack(spacing: 3) {
@@ -90,24 +90,6 @@ public struct TaskRowView: View {
                         .padding(.vertical, 2)
                         .background(Color.orange.opacity(0.12))
                         .clipShape(Capsule())
-                    }
-
-                    if task.isOverdue {
-                        Text("Overdue")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.red)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Color.red.opacity(0.12))
-                            .clipShape(Capsule())
-                    } else if !task.isScheduledForToday && task.status != .completed {
-                        Text("Tomorrow")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Color.secondary.opacity(0.1))
-                            .clipShape(Capsule())
                     }
                 }
             }
@@ -160,20 +142,6 @@ public struct TaskRowView: View {
                         }
                         .buttonStyle(.plain)
                         .help("Start focus session")
-
-                        Button {
-                            task.moveToTomorrow()
-                            try? modelContext.save()
-                            NotesSyncService.shared.autoSync(context: modelContext)
-                        } label: {
-                            Image(systemName: "arrow.right.circle")
-                                .font(.system(size: 15))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 24, height: 24)
-                                .contentShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Move to tomorrow")
                     }
 
                     Button {
@@ -245,13 +213,7 @@ public struct TaskRowView: View {
                 }
             }
 
-            Divider()
 
-            Button("Move to Tomorrow") {
-                task.moveToTomorrow()
-                try? modelContext.save()
-                NotesSyncService.shared.autoSync(context: modelContext)
-            }
 
             Button("Edit Task...") {
                 onEdit()

@@ -35,6 +35,8 @@ public struct QuickCaptureView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
+                .focusEffectDisabled()
             }
             .padding(.horizontal, 18)
             .padding(.top, 16)
@@ -113,6 +115,7 @@ public struct QuickCaptureView: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .buttonStyle(.plain)
+                .focusable(false)
                 .focusEffectDisabled()
 
                 Spacer()
@@ -142,6 +145,7 @@ public struct QuickCaptureView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .buttonStyle(.plain)
+                    .focusable(false)
                     .disabled(taskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
@@ -159,6 +163,12 @@ public struct QuickCaptureView: View {
         .preferredColorScheme(appState.appearanceMode == "light" ? .light : (appState.appearanceMode == "dark" ? .dark : nil))
         .shadow(color: .black.opacity(0.25), radius: 24, x: 0, y: 12)
         .onAppear {
+            DispatchQueue.main.async {
+                isInputFocused = true
+            }
+        }
+        .task {
+            try? await Task.sleep(nanoseconds: 50_000_000)
             isInputFocused = true
         }
     }
