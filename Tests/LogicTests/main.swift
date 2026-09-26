@@ -147,6 +147,19 @@ func runAllChecks() {
     assert(parsedItems[3].title == "Call parents" && parsedItems[3].workspace == .personal && !parsedItems[3].isCompleted)
     print("✅ Check 4 Passed: Apple Notes Two-Way parsing verified (HTML lists, strikes, and symbols).")
 
+    // Test 5a: Apple Notes entities must be decoded before being saved back to the app.
+    // Otherwise each sync escapes the ampersand again (&gt; -> &amp;gt; -> &amp;amp;gt;), creating duplicates.
+    let escapedNotesHtml = """
+    <div><b>WORK</b></div>
+    <div>○ HCV --&gt; station &amp; KG &lt; 10 &quot;quoted&quot; &#39;apostrophe&#39;</div>
+    <div>○ Recovered --&amp;amp;gt; station</div>
+    """
+    let parsedEscapedItems = NotesSyncService.shared.parseNotesBody(escapedNotesHtml)
+    assert(parsedEscapedItems.count == 2, "Expected two escaped Notes tasks, got \(parsedEscapedItems.count)")
+    assert(parsedEscapedItems[0].title == "HCV --> station & KG < 10 \"quoted\" 'apostrophe'", "HTML entities must decode to their original task title; got: \(parsedEscapedItems[0].title)")
+    assert(parsedEscapedItems[1].title == "Recovered --> station", "Repeatedly escaped legacy task titles must be normalized")
+    print("✅ Check 4a Passed: Apple Notes HTML entities decode without re-escaping.")
+
     // Test 6: Checkbox status cycling (1 time -> pending/inProgress, 2 times -> completed, again 1 time -> unchecked)
     let testTask = TaskItem(title: "Click test", workspace: .work, status: .pending)
     assert(testTask.status == .pending, "Initial status must be pending (unchecked mark)")
@@ -331,4 +344,3 @@ func runAllChecks() {
 }
 
 runAllChecks()
-
