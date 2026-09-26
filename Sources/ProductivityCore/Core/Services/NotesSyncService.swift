@@ -296,6 +296,18 @@ public final class NotesSyncService {
         let allTasksDescriptor = FetchDescriptor<TaskItem>()
         let existingTasks = (try? context.fetch(allTasksDescriptor)) ?? []
 
+        // Repair titles written by older versions that repeatedly escaped HTML entities.
+        // Normalize before deduplication so `--&amp;gt;`, `--&gt;`, and `-->` collapse to one task.
+        var normalizedExistingTitle = false
+        for task in existingTasks {
+            let normalizedTitle = normalizeNotesTaskTitle(task.title)
+            if normalizedTitle != task.title {
+                task.title = normalizedTitle
+                task.updatedAt = Date()
+                normalizedExistingTitle = true
+            }
+        }
+
         let notesTitles = Set(parsedItems.map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
         var reservedHeaders: Set<String> = ["WORK", "PERSONAL", "FREELANCE", "TASKS — TODAY", "TASKS - TODAY", "NO ACTIVE TASKS", "TASKS", noteTitle.uppercased()]
         for ws in AppState.shared.workspaces {
@@ -346,7 +358,7 @@ public final class NotesSyncService {
 
             validExistingTasks.append(task)
         }
-        if purgedAny {
+        if purgedAny || normalizedExistingTitle {
             try? context.save()
         }
 
@@ -475,7 +487,7 @@ public final class NotesSyncService {
                 }
                 if let items = try? JSONDecoder().decode([ExtractedItem].self, from: data), !items.isEmpty {
                     return items.map {
-                        ($0.title, Workspace(rawValue: $0.workspace), $0.completed)
+                        (normalizeNotesTaskTitle($0.title), Workspace(rawValue: $0.workspace), $0.completed)
                     }
                 }
             } catch {
@@ -798,6 +810,7 @@ public final class NotesSyncService {
                            rawLine.localizedCaseInsensitiveContains("checked")
 
             var line = rawLine.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            line = normalizeNotesTaskTitle(line)
             line = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if line.isEmpty { continue }
 
@@ -876,6 +889,57 @@ public final class NotesSyncService {
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
             .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    /// Decodes text returned by Apple Notes' HTML body. Repeating the operation is intentional:
+    /// a title previously saved as `&amp;gt;` must recover to `>` instead of being re-escaped forever.
+    private func normalizeNotesTaskTitle(_ title: String) -> String {
+        var normalized = title
+        for _ in 0..<8 {
+            let decoded = decodeHtmlEntitiesOnce(normalized)
+            guard decoded != normalized else { break }
+            normalized = decoded
+        }
+        return normalized
+    }
+
+    private func decodeHtmlEntitiesOnce(_ string: String) -> String {
+        // When a semicolon is present it must be consumed; otherwise a non-alphanumeric,
+        // non-semicolon boundary allows the malformed forms Notes has emitted in the past.
+        let pattern = #"&(amp|lt|gt|quot|apos)(?:;|(?=[^A-Za-z0-9;]))|&#(?:[xX][0-9A-Fa-f]+|[0-9]+)(?:;|(?=[^A-Za-z0-9;]))"#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return string }
+        let fullRange = NSRange(string.startIndex..., in: string)
+        let matches = expression.matches(in: string, range: fullRange)
+        guard !matches.isEmpty else { return string }
+
+        var decoded = ""
+        var cursor = string.startIndex
+        for match in matches {
+            guard let range = Range(match.range, in: string) else { continue }
+            decoded += String(string[cursor..<range.lowerBound])
+            let entity = String(string[range])
+            decoded += decodedHtmlEntity(entity) ?? entity
+            cursor = range.upperBound
+        }
+        decoded += String(string[cursor...])
+        return decoded
+    }
+
+    private func decodedHtmlEntity(_ entity: String) -> String? {
+        switch entity.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ";")) {
+        case "&amp": return "&"
+        case "&lt": return "<"
+        case "&gt": return ">"
+        case "&quot": return "\""
+        case "&apos": return "'"
+        default:
+            guard entity.hasPrefix("&#") else { return nil }
+            let body = entity.dropFirst(2).trimmingCharacters(in: CharacterSet(charactersIn: ";"))
+            let radix = body.first == "x" || body.first == "X" ? 16 : 10
+            let digits = radix == 16 ? body.dropFirst() : Substring(body)
+            guard let value = UInt32(digits, radix: radix), let scalar = UnicodeScalar(value) else { return nil }
+            return String(Character(scalar))
+        }
     }
 
     private func escapeAppleScript(_ str: String) -> String {
