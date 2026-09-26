@@ -123,6 +123,10 @@ func runAllChecks() {
     assert(!html.contains("<div>Fix crash in API</div>"), "HTML must NOT display bare unadorned task names without checklist markers")
     print("✅ Check 3 Passed: Apple Notes checklist structure verified (visual checklist markers present).")
 
+    // Test 4: A row copy action must place exactly the task title on the clipboard.
+    assert(TaskClipboardContent.title(for: workTask2) == "Refactor database query", "Copy action must use the task title without status markers or notes")
+    print("✅ Check 3a Passed: Task row copy text is the task title.")
+
     // Test 5: Apple Notes Two-Way Parser
     let mockNotesHtml = """
     <div><b>TASKS — TODAY</b></div>
