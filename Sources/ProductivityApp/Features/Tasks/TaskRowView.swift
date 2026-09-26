@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AppKit
 import ProductivityCore
 
 public struct TaskRowView: View {
@@ -13,6 +14,7 @@ public struct TaskRowView: View {
     var onMoveDown: (() -> Void)?
 
     @State private var isHovered: Bool = false
+    @State private var didCopy: Bool = false
     @Environment(\.modelContext) private var modelContext
     private var appState = AppState.shared
 
@@ -102,6 +104,19 @@ public struct TaskRowView: View {
                     NotesSyncService.shared.autoSync(context: modelContext)
                 }
             }
+
+            Button {
+                copyTaskTitle()
+            } label: {
+                Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(didCopy ? .green : .secondary)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .opacity(isHovered || didCopy ? 1 : 0.45)
+            .help(didCopy ? "Copied task title" : "Copy task title")
 
             // Quick actions on hover
             if isHovered {
@@ -264,5 +279,18 @@ public struct TaskRowView: View {
         task.cycleStatus()
         try? modelContext.save()
         NotesSyncService.shared.autoSync(context: modelContext)
+    }
+
+    private func copyTaskTitle() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(TaskClipboardContent.title(for: task), forType: .string)
+        withAnimation(.easeInOut(duration: 0.15)) {
+            didCopy = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                didCopy = false
+            }
+        }
     }
 }
