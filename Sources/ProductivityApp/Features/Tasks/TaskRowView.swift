@@ -105,19 +105,6 @@ public struct TaskRowView: View {
                 }
             }
 
-            Button {
-                copyTaskTitle()
-            } label: {
-                Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(didCopy ? .green : .secondary)
-                    .frame(width: 24, height: 24)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .opacity(isHovered || didCopy ? 1 : 0.45)
-            .help(didCopy ? "Copied task title" : "Copy task title")
-
             // Quick actions on hover
             if isHovered {
                 HStack(spacing: 6) {
@@ -170,6 +157,18 @@ public struct TaskRowView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Edit task")
+
+                    Button {
+                        copyTaskTitle()
+                    } label: {
+                        Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(didCopy ? .green : .secondary)
+                            .frame(width: 24, height: 24)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(didCopy ? "Copied task title" : "Copy task title")
                 }
                 .transition(.opacity)
             }
