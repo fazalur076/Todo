@@ -24,6 +24,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Set activation policy to accessory so it lives in the menu bar without a Dock icon
         NSApp.setActivationPolicy(.accessory)
+
+        // This app owns its settings presentation inside the floating panel.
+        // A standalone SwiftUI Settings scene can be restored by macOS and
+        // appear as soon as the menu-bar app launches.
+        DispatchQueue.main.async {
+            NSApp.windows.forEach { $0.orderOut(nil) }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
