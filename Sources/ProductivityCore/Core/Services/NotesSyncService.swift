@@ -191,7 +191,7 @@ public final class NotesSyncService {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard !Task.isCancelled else { return }
             guard AppState.shared.syncNotesEnabled else { return }
-            guard self.needsPushToNotes(context: context) else { return }
+            guard await self.needsPushToNotes(context: context) else { return }
             do {
                 try await self.syncToNotes(from: context, openNotes: false)
             } catch {
@@ -211,7 +211,7 @@ public final class NotesSyncService {
         }
 
         // If the note was deleted or does not exist in Apple Notes, recreate it from the app!
-        if !noteExistsInNotes() {
+        if !(await noteExistsInNotes()) {
             let allTasksDescriptor = FetchDescriptor<TaskItem>()
             let existingTasks = (try? context.fetch(allTasksDescriptor)) ?? []
             if !existingTasks.isEmpty {
@@ -225,7 +225,7 @@ public final class NotesSyncService {
         }
 
         // Step 1: Attempt to read native checklist states directly from NoteStore.sqlite
-        var parsedItems = fetchItemsFromNoteStore()
+        var parsedItems = await fetchItemsFromNoteStore()
 
         // Step 2: Fallback to AppleScript HTML body if SQLite parser found no items
         let noteTitle = AppState.shared.notesNoteTitle
@@ -300,7 +300,7 @@ public final class NotesSyncService {
         // Normalize before deduplication so `--&amp;gt;`, `--&gt;`, and `-->` collapse to one task.
         var normalizedExistingTitle = false
         for task in existingTasks {
-            let normalizedTitle = normalizeNotesTaskTitle(task.title)
+            let normalizedTitle = Self.normalizeNotesTaskTitle(task.title)
             if normalizedTitle != task.title {
                 task.title = normalizedTitle
                 task.updatedAt = Date()
@@ -366,7 +366,8 @@ public final class NotesSyncService {
             // If the note was deleted and not found in Notes, recreate it from the app!
             if !validExistingTasks.isEmpty {
                 let shouldRecreate = lastRecreationAttempt == nil || Date().timeIntervalSince(lastRecreationAttempt!) > 5
-                if shouldRecreate && !noteExistsInNotes() {
+                let noteStillExists = await noteExistsInNotes()
+                if shouldRecreate && !noteStillExists {
                     lastRecreationAttempt = Date()
                     try? await syncToNotes(from: context, openNotes: false)
                 }
@@ -455,50 +456,57 @@ public final class NotesSyncService {
     }
 
     /// Fetches native checklist states from NoteStore.sqlite via note_extractor.py
-    private func fetchItemsFromNoteStore() -> [(title: String, workspace: Workspace, isCompleted: Bool)] {
-        var candidates: [String] = []
+    private func fetchItemsFromNoteStore() async -> [(title: String, workspace: Workspace, isCompleted: Bool)] {
+        var candidatePaths: [String] = []
         if let resPath = Bundle.main.resourcePath {
-            candidates.append("\(resPath)/note_extractor.py")
+            candidatePaths.append("\(resPath)/note_extractor.py")
         }
         let currentDir = FileManager.default.currentDirectoryPath
-        candidates.append("\(currentDir)/Sources/ProductivityCore/Resources/note_extractor.py")
-        candidates.append("\(currentDir)/Todo.app/Contents/Resources/note_extractor.py")
+        candidatePaths.append("\(currentDir)/Sources/ProductivityCore/Resources/note_extractor.py")
+        candidatePaths.append("\(currentDir)/Todo.app/Contents/Resources/note_extractor.py")
+        let candidates = candidatePaths
 
         let divMap = AppState.shared.workspaces.reduce(into: [String: String]()) { dict, ws in
             dict[ws.name.uppercased()] = ws.id
         }
         let divJson = (try? String(data: JSONEncoder().encode(divMap), encoding: .utf8)) ?? "{}"
+        let noteTitle = AppState.shared.notesNoteTitle
 
-        for path in candidates {
-            guard FileManager.default.fileExists(atPath: path) else { continue }
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-            process.arguments = [path, divJson, AppState.shared.notesNoteTitle]
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            do {
-                try process.run()
-                process.waitUntilExit()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                struct ExtractedItem: Codable {
-                    let title: String
-                    let workspace: String
-                    let completed: Bool
-                }
-                if let items = try? JSONDecoder().decode([ExtractedItem].self, from: data), !items.isEmpty {
-                    return items.map {
-                        (normalizeNotesTaskTitle($0.title), Workspace(rawValue: $0.workspace), $0.completed)
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                for path in candidates {
+                    guard FileManager.default.fileExists(atPath: path) else { continue }
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+                    process.arguments = [path, divJson, noteTitle]
+                    let pipe = Pipe()
+                    process.standardOutput = pipe
+                    do {
+                        try process.run()
+                        process.waitUntilExit()
+                        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                        struct ExtractedItem: Codable {
+                            let title: String
+                            let workspace: String
+                            let completed: Bool
+                        }
+                        if let items = try? JSONDecoder().decode([ExtractedItem].self, from: data), !items.isEmpty {
+                            continuation.resume(returning: items.map {
+                                (Self.normalizeNotesTaskTitle($0.title), Workspace(rawValue: $0.workspace), $0.completed)
+                            })
+                            return
+                        }
+                    } catch {
+                        continue
                     }
                 }
-            } catch {
-                continue
+                continuation.resume(returning: [])
             }
         }
-        return []
     }
 
     /// Compares local tasks with Apple Notes to avoid unnecessary note rewrites and mobile conflicts
-    public func needsPushToNotes(context: ModelContext) -> Bool {
+    public func needsPushToNotes(context: ModelContext) async -> Bool {
         let taskDescriptor = FetchDescriptor<TaskItem>(
             sortBy: [SortDescriptor(\.sortOrder)]
         )
@@ -516,11 +524,11 @@ public final class NotesSyncService {
 
         let hasAnyLocalTasks = localTasksByWs.values.contains { !$0.isEmpty }
 
-        if !noteExistsInNotes() {
+        if !(await noteExistsInNotes()) {
             return hasAnyLocalTasks
         }
 
-        let notesItems = fetchCurrentNotesItems()
+        let notesItems = await fetchCurrentNotesItems()
         if notesItems.isEmpty {
             return hasAnyLocalTasks
         }
@@ -556,8 +564,8 @@ public final class NotesSyncService {
         return false
     }
 
-    private func fetchCurrentNotesItems() -> [(title: String, workspace: Workspace, isCompleted: Bool)] {
-        let storeItems = fetchItemsFromNoteStore()
+    private func fetchCurrentNotesItems() async -> [(title: String, workspace: Workspace, isCompleted: Bool)] {
+        let storeItems = await fetchItemsFromNoteStore()
         if !storeItems.isEmpty {
             return storeItems
         }
@@ -592,17 +600,17 @@ public final class NotesSyncService {
             end if
         end tell
         """
-        var errorDict: NSDictionary?
-        guard let script = NSAppleScript(source: scriptSource) else { return [] }
-        let descriptor = script.executeAndReturnError(&errorDict)
-        if let body = descriptor.stringValue, !body.isEmpty {
+        guard let body = try? await executeScriptReturningString(scriptSource), !body.isEmpty else {
+            return []
+        }
+        if !body.isEmpty {
             return parseNotesBody(body)
         }
         return []
     }
 
     /// Checks whether an active (non-deleted) target note exists in Apple Notes
-    public func noteExistsInNotes() -> Bool {
+    public func noteExistsInNotes() async -> Bool {
         let noteTitle = AppState.shared.notesNoteTitle
         let scriptSource = """
         tell application "Notes"
@@ -629,10 +637,8 @@ public final class NotesSyncService {
             return (count of activeNotes) > 0
         end tell
         """
-        var errorDict: NSDictionary?
-        guard let script = NSAppleScript(source: scriptSource) else { return false }
-        let descriptor = script.executeAndReturnError(&errorDict)
-        return descriptor.booleanValue
+        guard let result = try? await executeScriptReturningString(scriptSource) else { return false }
+        return result == "true" || result == "1"
     }
 
     /// Two-way sync: Pulls user edits from Apple Notes first, and only pushes if local changes exist.
@@ -643,7 +649,7 @@ public final class NotesSyncService {
         let result = (try? await pullFromNotes(context: context)) ?? (0, 0)
 
         // Step 2: Push back if local differences exist or if explicitly requested via openNotes
-        if needsPushToNotes(context: context) || openNotes {
+        if await needsPushToNotes(context: context) || openNotes {
             try await syncToNotes(from: context, openNotes: openNotes)
         }
 
@@ -770,6 +776,29 @@ public final class NotesSyncService {
         }
     }
 
+    /// Runs a read-only AppleScript away from the main actor and returns its
+    /// textual result. Notes can be slow while waking, prompting, or syncing;
+    /// none of those waits should block the menu-bar app's event loop.
+    private func executeScriptReturningString(_ source: String) async throws -> String {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                var errorDict: NSDictionary?
+                guard let script = NSAppleScript(source: source) else {
+                    continuation.resume(throwing: NSError(domain: "NotesSync", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to create AppleScript."]))
+                    return
+                }
+
+                let descriptor = script.executeAndReturnError(&errorDict)
+                if let error = errorDict {
+                    let message = error[NSAppleScript.errorMessage] as? String ?? "Unknown AppleScript error"
+                    continuation.resume(throwing: NSError(domain: "NotesSync", code: 2, userInfo: [NSLocalizedDescriptionKey: message]))
+                } else {
+                    continuation.resume(returning: descriptor.stringValue ?? (descriptor.booleanValue ? "true" : "false"))
+                }
+            }
+        }
+    }
+
     public func parseNotesBody(_ raw: String) -> [(title: String, workspace: Workspace, isCompleted: Bool)] {
         var results: [(String, Workspace, Bool)] = []
         var currentWorkspace: Workspace = .work
@@ -810,7 +839,7 @@ public final class NotesSyncService {
                            rawLine.localizedCaseInsensitiveContains("checked")
 
             var line = rawLine.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-            line = normalizeNotesTaskTitle(line)
+            line = Self.normalizeNotesTaskTitle(line)
             line = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if line.isEmpty { continue }
 
@@ -893,17 +922,17 @@ public final class NotesSyncService {
 
     /// Decodes text returned by Apple Notes' HTML body. Repeating the operation is intentional:
     /// a title previously saved as `&amp;gt;` must recover to `>` instead of being re-escaped forever.
-    private func normalizeNotesTaskTitle(_ title: String) -> String {
+    nonisolated private static func normalizeNotesTaskTitle(_ title: String) -> String {
         var normalized = title
         for _ in 0..<8 {
-            let decoded = decodeHtmlEntitiesOnce(normalized)
+            let decoded = Self.decodeHtmlEntitiesOnce(normalized)
             guard decoded != normalized else { break }
             normalized = decoded
         }
         return normalized
     }
 
-    private func decodeHtmlEntitiesOnce(_ string: String) -> String {
+    nonisolated private static func decodeHtmlEntitiesOnce(_ string: String) -> String {
         // When a semicolon is present it must be consumed; otherwise a non-alphanumeric,
         // non-semicolon boundary allows the malformed forms Notes has emitted in the past.
         let pattern = #"&(amp|lt|gt|quot|apos)(?:;|(?=[^A-Za-z0-9;]))|&#(?:[xX][0-9A-Fa-f]+|[0-9]+)(?:;|(?=[^A-Za-z0-9;]))"#
@@ -918,14 +947,14 @@ public final class NotesSyncService {
             guard let range = Range(match.range, in: string) else { continue }
             decoded += String(string[cursor..<range.lowerBound])
             let entity = String(string[range])
-            decoded += decodedHtmlEntity(entity) ?? entity
+            decoded += Self.decodedHtmlEntity(entity) ?? entity
             cursor = range.upperBound
         }
         decoded += String(string[cursor...])
         return decoded
     }
 
-    private func decodedHtmlEntity(_ entity: String) -> String? {
+    nonisolated private static func decodedHtmlEntity(_ entity: String) -> String? {
         switch entity.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ";")) {
         case "&amp": return "&"
         case "&lt": return "<"

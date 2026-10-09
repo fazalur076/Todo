@@ -62,9 +62,11 @@ public final class AppState {
 
     public var launchAtLogin: Bool {
         didSet {
-            updateLaunchAtLogin(launchAtLogin)
+            scheduleLaunchAtLoginUpdate(launchAtLogin)
         }
     }
+
+    private var launchAtLoginUpdateToken = 0
 
     // Modal & sheet states
     public var isQuickCapturePresented: Bool = false
@@ -306,7 +308,26 @@ public final class AppState {
         }
     }
 
-    private func updateLaunchAtLogin(_ enabled: Bool) {
+    private func scheduleLaunchAtLoginUpdate(_ enabled: Bool) {
+        launchAtLoginUpdateToken += 1
+        let token = launchAtLoginUpdateToken
+
+        // Launch Services may wait on macOS. Keep that work off the UI event
+        // handler that is updating the SwiftUI Toggle.
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let succeeded = Self.updateLaunchAtLogin(enabled)
+            Task { @MainActor in
+                guard let self, token == self.launchAtLoginUpdateToken else { return }
+                if !succeeded {
+                    // Keep the toggle aligned with macOS if registration fails.
+                    self.launchAtLogin = !enabled
+                }
+            }
+        }
+    }
+
+    @discardableResult
+    nonisolated private static func updateLaunchAtLogin(_ enabled: Bool) -> Bool {
         if #available(macOS 13.0, *) {
             do {
                 if enabled {
@@ -318,9 +339,12 @@ public final class AppState {
                         try SMAppService.mainApp.unregister()
                     }
                 }
+                return true
             } catch {
                 print("Failed to toggle Launch at Login: \(error.localizedDescription)")
+                return false
             }
         }
+        return true
     }
 }
